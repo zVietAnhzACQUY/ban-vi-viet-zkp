@@ -1,0 +1,27 @@
+{
+  "name": "ban-vi-viet-zkp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "golden:generate": "node circuits/scripts/golden.mjs",
+    "circuits:build": "node circuits/scripts/build.mjs",
+    "circuits:test": "node circuits/scripts/test.mjs",
+    "test": "npm run circuits:test",
+    "build": "npm run circuits:build",
+    "dev": "npm --prefix apps run dev",
+    "g2:build": "npm --prefix apps run build",
+    "g2:test": "npm --prefix apps test",
+    "db:generate": "npm --prefix apps run db:generate",
+    "db:migrate": "npm --prefix apps run db:migrate",
+    "db:seed": "npm --prefix apps run db:seed"
+  },
+  "devDependencies": {
+    "circomlib": "2.0.5",
+    "circomlibjs": "0.1.7",
+    "snarkjs": "0.7.6"
+  }
+}

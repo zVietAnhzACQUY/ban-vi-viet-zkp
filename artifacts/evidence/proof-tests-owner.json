@@ -1,0 +1,84 @@
+{
+  "createdAt": "2026-09-28T02:22:57.640Z",
+  "stage": "owner",
+  "setupSha256": "78a90da73205f21da89aa3ba6c4ecea65ce77319d102018374b653bb80f29994",
+  "cases": [
+    {
+      "id": "AGE-valid-proof",
+      "result": "PASS",
+      "detail": "Real Groth16 proof verified; public signals match golden and observed symbol order"
+    },
+    {
+      "id": "AGE-tampered-commitment",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "AGE-tampered-cutoffDay",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "AGE-tampered-requestHash",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "AGE-tampered-nullifier",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "AGE-tampered-proof",
+      "result": "PASS",
+      "detail": "Modified proof rejected"
+    },
+    {
+      "id": "AGE-wrong-vk",
+      "result": "PASS",
+      "detail": "Other circuit verification key rejected by public schema/count guard"
+    },
+    {
+      "id": "AGE-invalid-witness-proof",
+      "result": "PASS",
+      "detail": "Prover ran on corrupted witness; Groth16 verifier rejected"
+    },
+    {
+      "id": "LOT-valid-proof",
+      "result": "PASS",
+      "detail": "Real Groth16 proof verified; public signals match golden and observed symbol order"
+    },
+    {
+      "id": "LOT-tampered-commitment",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "LOT-tampered-publicAllowedCode",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "LOT-tampered-lotCodeHash",
+      "result": "PASS",
+      "detail": "Existing proof with one changed public signal rejected"
+    },
+    {
+      "id": "LOT-tampered-proof",
+      "result": "PASS",
+      "detail": "Modified proof rejected"
+    },
+    {
+      "id": "LOT-wrong-vk",
+      "result": "PASS",
+      "detail": "Other circuit verification key rejected by public schema/count guard"
+    },
+    {
+      "id": "LOT-invalid-witness-proof",
+      "result": "PASS",
+      "detail": "Prover ran on corrupted witness; Groth16 verifier rejected"
+    }
+  ],
+  "total": 15,
+  "status": "PASS"
+}

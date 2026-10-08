@@ -1,0 +1,67 @@
+{
+  "date": "2026-09-28",
+  "databaseSchema": "g2_test",
+  "node": "24.21.0",
+  "totals": {
+    "tests": 36,
+    "passed": 36,
+    "failed": 0
+  },
+  "search": {
+    "status": "PASS",
+    "tests": 4,
+    "durationMs": 400.9674
+  },
+  "g2Regression": {
+    "status": "PASS",
+    "tests": 14,
+    "businessSubtests": 13,
+    "durationMs": 6245.4849
+  },
+  "g3Regression": {
+    "status": "PASS",
+    "tests": 9,
+    "businessSubtests": 8,
+    "durationMs": 7580.3759
+  },
+  "g4LotZkp": {
+    "status": "PASS",
+    "tests": 9,
+    "businessSubtests": 8,
+    "durationMs": 4961.8246,
+    "cases": [
+      "valid signed proof becomes ACTIVE and private inputs are not persisted",
+      "tampered proof is rejected",
+      "invalid Issuer signature is rejected",
+      "proof bound to another lot is rejected",
+      "expired credential is rejected despite a valid Groth16 proof",
+      "revocation hides the online bundle while offline math still verifies",
+      "ACTIVE proof becomes EXPIRED when server time advances",
+      "two concurrent checkouts for final lot create one order; cancellation restores Product and Lot"
+    ]
+  },
+  "browser": {
+    "status": "FAIL_CLOSED_PASS",
+    "surface": "real in-app Chromium tab on localhost",
+    "behavior": "The product page fetched and evaluated a mathematically valid fixture proof, then refused the verified label because the ephemeral fixture Issuer fingerprint did not match the pinned G1 LOT key.",
+    "ownerSignedHappyPath": "REQUIRES_OWNER_KEY_COMMANDS_IN_README",
+    "privateIssuerKeyRead": false,
+    "evidence": "browser-issuer-fail-closed.png",
+    "evidenceSha256": "fb27d338da2b68bdb67dd13779623516236eec891ea921a2e5f1ac0cd2d20294"
+  },
+  "build": {
+    "status": "PASS",
+    "typescript": "PASS",
+    "modules": 1605,
+    "cssBytes": 20330,
+    "mainJsBytes": 567110,
+    "lazyPoseidonChunkBytes": 1905570,
+    "note": "Vite reports only the known cryptographic chunk-size warning."
+  },
+  "migration": {
+    "status": "PASS",
+    "migrations": 4,
+    "volumeReset": false
+  },
+  "ownerVerification": "PASS"
+}

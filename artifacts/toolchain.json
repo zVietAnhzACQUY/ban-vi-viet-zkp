@@ -1,0 +1,39 @@
+{
+    "recordedAtUtc":  "2026-09-26T09:54:10.1762987Z",
+    "node":  "24.21.0",
+    "npm":  "11.19.0",
+    "platform":  "win32-x64",
+    "circom":  {
+                   "commit":  "ad44e915a12bb047b05745c2884aad9cc8326bc6",
+                   "sha256":  "e43f132ee6f0aa79b705beceb59c2a7e6a54d7bdeab917ca34e9fc1951d185e1",
+                   "version":  "2.2.3",
+                   "url":  "https://github.com/iden3/circom/releases/download/v2.2.3/circom-windows-amd64.exe"
+               },
+    "nodeArchiveSha256":  "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+    "dependencies":  {
+                         "circomlib":  {
+                                           "version":  "2.0.5",
+                                           "commit":  "cff5ab6288b55ef23602221694a6a38a0239dcc0"
+                                       },
+                         "circomlibjs":  {
+                                             "version":  "0.1.7",
+                                             "commit":  "4f094c5be05c1f0210924a3ab204d8fd8da69f49"
+                                         },
+                         "snarkjs":  {
+                                         "version":  "0.7.6",
+                                         "commit":  "9a8f1c0083d18b9b5e18f526cfd729e7259423be"
+                                     }
+                     },
+    "compilerFlags":  [
+                          "--r1cs",
+                          "--wasm",
+                          "--sym",
+                          "--O1",
+                          "--prime",
+                          "bn128",
+                          "--sanity_check",
+                          "2"
+                      ],
+    "lockfileSha256":  "147509566a76be6cb6df51afb689b3367530f770c6a4cc81a2f5b97f17cddd89",
+    "goldenSha256":  "891387a82639ed25671e7c91deeb768066b1024af950518586116c7fbffe17d1"
+}

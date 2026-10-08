@@ -1,0 +1,19 @@
+{
+  "status": "G1_OFFLINE_VERIFIED_SINGLE_PARTY",
+  "manifestSha256": "c942cffd8a412652f8df829fa842c3cfee972b0129d08b690fdada8cd7c511dc",
+  "proofChecks": 15,
+  "issuerFingerprints": [
+    {
+      "type": "AGE",
+      "keyVersion": 1,
+      "fingerprint": "19aaf06a064ed73d970f3585b07bdae9c53c99f2f6705fe03b4010f810bf7263"
+    },
+    {
+      "type": "LOT",
+      "keyVersion": 1,
+      "fingerprint": "6d9579c3d46bbe06d28ae7b73277d3080a6bd9a77aa4e2c4cc54e75f5c10c28d"
+    }
+  ],
+  "setupTranscriptSha256": "243d623bf86cc5481be038014eb24fc77d55fd62f5202a32e02228749a72acd1",
+  "limits": "Owner single-party simulated Issuer/setup. No legal or institutional trust claim."
+}

@@ -1,0 +1,49 @@
+{
+  "date": "2026-09-28",
+  "databaseSchema": "g2_test",
+  "runner": {
+    "node": "24.21.0",
+    "tests": 23,
+    "passed": 23,
+    "failed": 0,
+    "g2DurationMs": 3318.6165,
+    "g3DurationMs": 6053.568,
+    "sequentialTotalMs": 9372.1845
+  },
+  "g2Regression": {
+    "status": "PASS",
+    "tests": 14,
+    "failed": 0,
+    "businessSubtests": 13
+  },
+  "g3AgeZkp": {
+    "status": "PASS",
+    "businessSubtests": 8,
+    "cases": [
+      "valid proof and public-only persistence",
+      "underage witness rejected by circuit",
+      "tampered proof and Issuer signature rejected",
+      "expired challenge rejected",
+      "changed cart rejected",
+      "consumed proof replay rejected",
+      "six concurrent idempotent retries create one order",
+      "300-second TTL and G1 public signal order"
+    ]
+  },
+  "browser": {
+    "status": "PASS",
+    "surface": "real in-app Chromium tab on localhost",
+    "behavior": "Historical G3 browser run before the separate Wallet-origin architecture; retained only as gate history and superseded for current operation by decisions D25-D29 and G5 evidence",
+    "supersededBy": "docs/evidence/g5/test-results.json",
+    "orderCode": "BVV-3BB8D187",
+    "consoleErrors": 0,
+    "fixtureCredentialDeleted": true
+  },
+  "build": {
+    "status": "PASS",
+    "typescript": "PASS",
+    "mainJsBytes": 560630,
+    "lazyPoseidonChunkBytes": 1905570,
+    "note": "The cryptographic browser chunk is loaded on demand; Vite reports a size warning."
+  }
+}

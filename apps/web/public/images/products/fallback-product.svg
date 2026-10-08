@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 720" role="img" aria-labelledby="title description">
+  <title id="title">Bản Vị Việt</title>
+  <desc id="description">Ảnh dự phòng cho sản phẩm</desc>
+  <rect width="900" height="720" fill="#f8f4ea"/>
+  <circle cx="450" cy="326" r="156" fill="#eee7d8"/>
+  <path d="M450 210c-62 28-91 86-72 157 73-4 118-46 115-119-34 52-69 79-106 93 42-27 63-69 63-131Z" fill="#2f5d46"/>
+  <text x="450" y="535" text-anchor="middle" font-family="Georgia,serif" font-size="44" fill="#18392b">BẢN VỊ VIỆT</text>
+  <text x="450" y="578" text-anchor="middle" font-family="Arial,sans-serif" font-size="18" letter-spacing="4" fill="#687169">THỨC QUÀ TỪ ĐẤT VIỆT</text>
+</svg>

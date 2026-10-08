@@ -1,0 +1,295 @@
+{
+  "date": "2026-09-30",
+  "status": "READY AFTER OWNER TEST",
+  "environment": {
+    "node": "24.21.0",
+    "npm": "11.19.0",
+    "postgres": "17.6-alpine",
+    "testSchema": "g2_test",
+    "volumeReset": false,
+    "newMigration": false,
+    "repositoryHasGitMetadata": false
+  },
+  "tests": {
+    "command": "cd apps; npm test",
+    "status": "PASS",
+    "total": 59,
+    "passed": 59,
+    "failed": 0,
+    "groups": {
+      "search": 4,
+      "checkoutPolicy": 1,
+      "walletProtocol": 16,
+      "g2": 15,
+      "g3Age": 14,
+      "g4Lot": 9
+    },
+    "criticalCases": [
+      "normal cart does not create an age challenge or open the wallet",
+      "multiple age-restricted products use one challenge and one verification",
+      "wrong website, Wallet and API artifact origins plus source, request ID, challenge ID, expiry and replay are rejected",
+      "popup listener, interval and timeout cleanup on success, rejection, close and timeout",
+      "artifact SHA-256 mismatch fails closed for network and cache",
+      "valid, underage, tampered proof, tampered public signals, expired, cart-changed, replay and concurrent AGE flows",
+      "database unique nullifier invariant and retry after pre-commit checkout failure",
+      "LOT public bundle privacy, tamper, wrong lot, expiry, revocation, stale status and stock race"
+    ]
+  },
+  "build": {
+    "command": "cd apps; npm run build",
+    "status": "PASS",
+    "typescript": "PASS",
+    "web": {
+      "modules": 1678,
+      "cssBytes": 24095,
+      "mainJsBytes": 893305
+    },
+    "wallet": {
+      "modules": 1661,
+      "workerBytes": 284135,
+      "mainJsBytes": 476716,
+      "poseidonChunkBytes": 1905570
+    },
+    "warnings": [
+      "Vite chunk-size warning for pinned cryptographic dependencies"
+    ]
+  },
+  "database": {
+    "migrationStatus": "PASS_NO_PENDING_MIGRATIONS",
+    "migrationCount": 4,
+    "seed": {
+      "products": 8,
+      "categories": 3,
+      "lots": 3
+    },
+    "publicSnapshot": {
+      "ageChallenges": 0,
+      "ageVerifications": 0,
+      "lotCredentials": 1,
+      "lotProofs": 1
+    },
+    "forbiddenColumnNameAudit": "PASS_NONE_FOUND"
+  },
+  "services": {
+    "apiHealth": {
+      "status": "ok",
+      "gate": "G5",
+      "ageZkp": "integrated",
+      "lotZkp": "integrated"
+    },
+    "web": "HTTP_200",
+    "wallet": "HTTP_200",
+    "ageArtifactCors": "PASS_EXACT_WALLET_ORIGIN",
+    "wrongOriginCors": "PASS_NO_ALLOW_ORIGIN",
+    "ageWasmBytes": 2423303,
+    "lotCacheControl": "no-store"
+  },
+  "browser": {
+    "surface": "Codex in-app Browser on localhost",
+    "webConsoleErrors": 0,
+    "walletConsoleErrors": 0,
+    "catalogProducts": 8,
+    "accentInsensitiveSearch": "PASS_ca_phe_to_Ca_phe_Dak_Lak",
+    "fontVietnamese": "PASS_NFC_TIMES_NEW_ROMAN_NORMAL_LETTER_SPACING",
+    "lotActive": {
+      "productSlug": "hat-dieu-binh-phuoc",
+      "lotCode": "BP-2026-03",
+      "status": "ACTIVE",
+      "checkedAt": "2026-09-30T04:51:25.77Z",
+      "expiresAt": "2026-10-29T04:36:44Z",
+      "privateFieldsInBundle": false
+    },
+    "lotUnverified": {
+      "lotCode": "DL-2026-01",
+      "verifiedLabelShown": false
+    },
+    "limitations": [
+      "Direct API tab navigation was blocked by the in-app browser client; local HTTP health returned 200.",
+      "The browser automation scope did not expose IndexedDB or Cache Storage reads."
+    ],
+    "evidence": [
+      {
+        "path": "ui-before-home.jpg",
+        "sha256": "09f5fe054036f2e13aaf58b68934b12124fa98bc4668310ecbdd101ce982302c"
+      },
+      {
+        "path": "ui-after-home-viewport.png",
+        "sha256": "9951c2efdeeceae48c97b9303c4fa6ec53f5adaa5e53066867dd5c3d99a9ddfc"
+      },
+      {
+        "path": "ui-after-product-viewport.png",
+        "sha256": "ecb8a3aee68954ee140c44e4ccc6f8e0537a5477f4466fb5935ab99aeaf84048"
+      },
+      {
+        "path": "ui-after-account-viewport.png",
+        "sha256": "80e0dd5cf032c7ce1240321e7e5bc1090a3920ab6ebb35fafd3734c10a9e76cc"
+      },
+      {
+        "path": "ui-after-home-mobile-390x844.png",
+        "sha256": "a26ef6800806b91bebc03856167d3f34b0bbd34e23f2a11013ad936dc93813e8"
+      },
+      {
+        "path": "ui-before-wallet.jpg",
+        "sha256": "a53b2c9cdcbb57705b6deb4a6a66390e6a60512b0aa13baa7ffa47f1fb353b7f"
+      },
+      {
+        "path": "ui-after-wallet-viewport.png",
+        "sha256": "b164ae12458fb061dd332b9be1010cd2e1ba4b5752df1e3627a8ddd247a85329"
+      },
+      {
+        "path": "ui-after-wallet-mobile-390x844.png",
+        "sha256": "d84ad84e32e3026e4281ddafd1a225d53e858dcc070cfb981eae2bd83a8ff264"
+      },
+      {
+        "path": "ui-after-admin-viewport.png",
+        "sha256": "6af1aad5f13abe9bf47e3294769255b3f18f5e632eff94045871db079e8c6ccb"
+      },
+      {
+        "path": "ui-after-admin-users-viewport.png",
+        "sha256": "3347a4ef3957c12b4327daa90a854008db725391c67a31789c505d5552452fb0"
+      }
+    ],
+    "mobileViewport": {
+      "status": "PASS",
+      "width": 390,
+      "height": 844,
+      "webOverflow": false,
+      "walletOverflow": false
+    }
+  },
+  "ownerManualTest": {
+    "status": "PENDING OWNER MANUAL TEST",
+    "reason": "The AGE private key and credential remain exclusively with the owner; no fake owner E2E or benchmark was recorded.",
+    "required": [
+      "owner-signed credential import and persistence in Wallet IndexedDB",
+      "cold and warm artifact cache inspection",
+      "real popup consent, proof, API verification and COD checkout",
+      "at least one cold and two warm timing runs",
+      "DevTools Network, IndexedDB and Cache Storage privacy inspection"
+    ],
+    "privateIssuerKeyRead": false,
+    "ageCredentialRead": false
+  },
+  "g1Preservation": "g1-preservation-ui.json",
+  "uiStickyRefinement": {
+    "date": "2026-10-02",
+    "scope": "website UI refinement only",
+    "tests": {
+      "status": "PASS",
+      "total": 59,
+      "passed": 59,
+      "failed": 0
+    },
+    "build": {
+      "status": "PASS",
+      "webModules": 1678,
+      "webCssBytes": 26336,
+      "webMainJsBytes": 898066,
+      "walletModules": 1661,
+      "walletWorkerBytes": 284135,
+      "walletMainJsBytes": 476716,
+      "typescript": "PASS",
+      "warnings": [
+        "Vite chunk-size warning for pinned cryptographic dependencies"
+      ]
+    },
+    "browser": {
+      "desktop": {
+        "width": 1280,
+        "height": 720,
+        "stickyHeaderTopPx": 0,
+        "stickyHeaderHeightPx": 140.6,
+        "horizontalOverflow": false,
+        "cartVisible": true
+      },
+      "tablet": {
+        "width": 768,
+        "height": 1024,
+        "stickyHeaderTopPx": 0,
+        "stickyHeaderHeightPx": 133.4,
+        "horizontalOverflow": false,
+        "cartVisible": true
+      },
+      "mobile": {
+        "width": 390,
+        "height": 844,
+        "stickyHeaderTopPx": 0,
+        "stickyHeaderHeightPx": 123.8,
+        "horizontalOverflow": false,
+        "cartVisible": true,
+        "menuBelowHeader": true
+      },
+      "productSearch": "PASS_ca_phe_one_result",
+      "adminSearch": "PASS_ruou_two_results",
+      "adminPagination": "PASS_6_PER_PAGE_2_PAGES",
+      "webConsoleWarnErrorCount": 0,
+      "walletConsoleWarnErrorCount": 0
+    },
+    "database": {
+      "volumeReset": false,
+      "migrationCreated": false
+    },
+    "g1Preservation": {
+      "path": "g1-preservation-sticky-ui.json",
+      "checked": 46,
+      "unchanged": 46,
+      "mismatches": 0,
+      "artifactsChanged": false
+    },
+    "ownerAgeE2E": "NOT_RUN_CREDENTIAL_NOT_ACCESSED",
+    "evidence": [
+      {
+        "path": "ui-sticky-after-admin-filter.png",
+        "sha256": "f9d30cf60acc213edb40db481fb6a5ca36a4a5f9e7a2363e287d3a969cd1f1e0"
+      },
+      {
+        "path": "ui-sticky-after-admin-mobile-390x844.png",
+        "sha256": "d1d23a1a91a6c94ddb301fc8c2ca78690367ef31088aa103f16360cfa6d269e7"
+      },
+      {
+        "path": "ui-sticky-after-admin-search.png",
+        "sha256": "ecc6d9577bda6ddf331370f837f5ff7b019d344f00815de307dd53255765a41e"
+      },
+      {
+        "path": "ui-sticky-after-home.png",
+        "sha256": "6cb291b86af4c9a573a864fc0949c35b95fd3f0f3049c289972d69bcfc5a4601"
+      },
+      {
+        "path": "ui-sticky-after-mobile-390x844.png",
+        "sha256": "a85088c7e3e5aa797a30e92230207d11944e734a5c1a2fe3a9dbf4b305536e1c"
+      },
+      {
+        "path": "ui-sticky-after-mobile-menu.png",
+        "sha256": "0b1838a155c1b38c31105125c6a1e84afa910d48319a9a066600307f9a8b6b4a"
+      },
+      {
+        "path": "ui-sticky-after-mobile-scrolled.png",
+        "sha256": "a083aa792758483a7b8d5564f2ef7014e92c977ae998b5318754c09478f062ce"
+      },
+      {
+        "path": "ui-sticky-after-product-scrolled.png",
+        "sha256": "930dbd847c93d0863f6b6399149576a097ad752c66ce0ef6ccc2c4036e799473"
+      },
+      {
+        "path": "ui-sticky-after-scrolled.png",
+        "sha256": "085373bd3da76b69d6d7c986976dfe5ccd43b3be4c4f1c650474a856d76ccc17"
+      },
+      {
+        "path": "ui-sticky-after-tablet-768x1024.png",
+        "sha256": "a3dda41993e14da7da9da3af71724f6e6cc662d62774aa03833fe511920a89e7"
+      },
+      {
+        "path": "ui-sticky-before-home.png",
+        "sha256": "a884c5db6a275d798fc11cfb6e5d6eadb080df76b40c4a9c546aeda2afbace6a"
+      },
+      {
+        "path": "ui-sticky-before-scrolled.png",
+        "sha256": "a7b3422460dd1aec06cce755e7448b604af74e9ef053644775d955ade521dded"
+      },
+      {
+        "path": "ui-sticky-wallet-mobile-390x844.png",
+        "sha256": "d84ad84e32e3026e4281ddafd1a225d53e858dcc070cfb981eae2bd83a8ff264"
+      }
+    ]
+  }
+}

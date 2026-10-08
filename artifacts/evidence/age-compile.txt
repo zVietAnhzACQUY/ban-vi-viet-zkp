@@ -1,0 +1,24 @@
+[32mtemplate instances[0m: 148
+non-linear constraints: 634
+linear constraints: 787
+public inputs: 4
+private inputs: 3
+public outputs: 0
+wires: 1421
+labels: 2195
+[32mWritten successfully:[0m .work/build/age\age_eligibility.r1cs
+[32mWritten successfully:[0m .work/build/age\age_eligibility.sym
+[32mWritten successfully:[0m .work/build/age\age_eligibility_js\age_eligibility.wasm
+[32mEverything went okay[0m
+[32mtemplate instances[0m: 148
+non-linear constraints: 634
+linear constraints: 787
+public inputs: 4
+private inputs: 3
+public outputs: 0
+wires: 1421
+labels: 2195
+[32mWritten successfully:[0m .work/unchecked/age\age_eligibility.r1cs
+[32mWritten successfully:[0m .work/unchecked/age\age_eligibility.sym
+[32mWritten successfully:[0m .work/unchecked/age\age_eligibility_js\age_eligibility.wasm
+[32mEverything went okay[0m

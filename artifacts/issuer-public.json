@@ -1,0 +1,20 @@
+{
+  "createdAt": "2026-09-28T02:22:41.234Z",
+  "operator": "owner",
+  "issuers": [
+    {
+      "type": "AGE",
+      "keyVersion": 1,
+      "algorithm": "Ed25519",
+      "publicKey": "kkHOk7P-p3bnIOvvoDNyXJ-hTos8gWPYmwNf20uya64",
+      "fingerprint": "19aaf06a064ed73d970f3585b07bdae9c53c99f2f6705fe03b4010f810bf7263"
+    },
+    {
+      "type": "LOT",
+      "keyVersion": 1,
+      "algorithm": "Ed25519",
+      "publicKey": "S1BfoaeAiNA5Nwl3j4a_N5Tr-oH1psIaNm-MEXsnAXI",
+      "fingerprint": "6d9579c3d46bbe06d28ae7b73277d3080a6bd9a77aa4e2c4cc54e75f5c10c28d"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "createdAt": "2026-09-26T14:38:32.986Z",
+  "toolchainSha256": "dd7f43e440006f8755da7ae210d43a7fb603f173e4a122d9795c6e7857da1422",
+  "circuits": [
+    {
+      "name": "age_eligibility",
+      "dir": "age",
+      "type": "AGE",
+      "signals": [
+        "commitment",
+        "cutoffDay",
+        "requestHash",
+        "nullifier"
+      ],
+      "sourceSha256": "1c5e4e647e51da1ca0e9ab5777cbc31b51b18786e28860382c1f356dc57c8119",
+      "r1csSha256": "a92285505ff67a9c5a3c5f9703c90b2596ab96bf99e823fccfa10bae44b7eea3",
+      "wasmSha256": "6cfa2c24602376b839a726aff67e3782ed8c220e6b096d393a5746c5c43613c8",
+      "symSha256": "322966b47f6e2fa1ce09241b71d64fbf4a301834aa80622072e71dfbd3cc5173"
+    },
+    {
+      "name": "lot_origin",
+      "dir": "lot",
+      "type": "LOT",
+      "signals": [
+        "commitment",
+        "publicAllowedCode",
+        "lotCodeHash"
+      ],
+      "sourceSha256": "0b4fd109badc565f951446c833f5f3e90d251cf91f88c64676f9d355fa030cfd",
+      "r1csSha256": "855a5b9dd0124e7d4cbfff5257aa8d9967be4058a45760b143e7c333c68cf626",
+      "wasmSha256": "dabf75c9519a0e0513265f615b79b9e828d6a752c8f3d56a2d51001fa4925198",
+      "symSha256": "b94cd4f0e4b647d94f6fbbd45327f3e78d16e3f16542149e90bb77af5101c6ec"
+    }
+  ],
+  "requestVector": {
+    "sourceSha256": "236dc8081a8337c39006b664c792f1a97eeb27170967c06c2e6b0bed1eab93f0",
+    "r1csSha256": "74f06b8f78462c98075bfd08d3af0e21ea18bad4f09eaca59cc049f0550ec0e5",
+    "wasmSha256": "3b1d955afa0769ee6e04fb186b516d5b0475d15a4e8ba934bb22b248e0ae5c43"
+  }
+}

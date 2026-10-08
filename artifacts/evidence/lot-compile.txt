@@ -1,0 +1,24 @@
+[32mtemplate instances[0m: 75
+non-linear constraints: 324
+linear constraints: 511
+public inputs: 3
+private inputs: 4 (2 belong to witness)
+public outputs: 0
+wires: 840
+labels: 1360
+[32mWritten successfully:[0m .work/build/lot\lot_origin.r1cs
+[32mWritten successfully:[0m .work/build/lot\lot_origin.sym
+[32mWritten successfully:[0m .work/build/lot\lot_origin_js\lot_origin.wasm
+[32mEverything went okay[0m
+[32mtemplate instances[0m: 75
+non-linear constraints: 324
+linear constraints: 511
+public inputs: 3
+private inputs: 4 (2 belong to witness)
+public outputs: 0
+wires: 840
+labels: 1360
+[32mWritten successfully:[0m .work/unchecked/lot\lot_origin.r1cs
+[32mWritten successfully:[0m .work/unchecked/lot\lot_origin.sym
+[32mWritten successfully:[0m .work/unchecked/lot\lot_origin_js\lot_origin.wasm
+[32mEverything went okay[0m

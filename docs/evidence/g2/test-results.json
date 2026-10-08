@@ -1,0 +1,19 @@
+{
+  "gate": "G2",
+  "date": "2026-09-28",
+  "node": "24.21.0",
+  "postgres": "17.6-alpine",
+  "build": { "status": "PASS", "viteModules": 1593, "typescript": "PASS" },
+  "integration": {
+    "status": "PASS",
+    "nodeTestCount": 14,
+    "businessSubtests": 13,
+    "failed": 0,
+    "durationMs": 8714.9842,
+    "businessDurationMs": 3240.8878
+  },
+  "concurrency": { "buyers": 8, "initialStock": 1, "successfulOrders": 1, "conflicts": 7, "finalStock": 0 },
+  "idempotency": { "parallelRetries": 6, "uniqueOrders": 1, "stockDecrements": 1 },
+  "dependencyAudit": { "vulnerabilities": 0 },
+  "zkpOnline": "NOT_INTEGRATED_BY_G2_DESIGN"
+}

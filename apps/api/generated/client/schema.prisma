@@ -1,0 +1,502 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../apps/api/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  ISSUER_OPERATOR
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum LotStatus {
+  DRAFT
+  PENDING
+  ACTIVE
+  EXPIRED
+  REVOKED
+  STALE
+  ARCHIVED
+}
+
+enum AgeCredentialRequestStatus {
+  PENDING
+  APPROVED
+  ISSUING
+  ISSUED
+  REJECTED
+  REVOKED
+  EXPIRED
+}
+
+enum LotCredentialRequestStatus {
+  PENDING_EVIDENCE
+  PENDING_REVIEW
+  APPROVED
+  ISSUING
+  ISSUED
+  REJECTED
+  REVOKED
+  EXPIRED
+}
+
+enum CertificateStatus {
+  NONE
+  DEMO_VALID
+  DEMO_EXPIRED
+  DEMO_REVOKED
+}
+
+enum LotCredentialStatus {
+  ACTIVE
+  REVOKED
+  SUPERSEDED
+}
+
+enum LotProofStatus {
+  ACTIVE
+  STALE
+}
+
+enum AgeChallengeStatus {
+  ISSUED
+  VERIFIED
+  CONSUMED
+}
+
+model User {
+  id                      String                    @id @default(uuid()) @db.Uuid
+  email                   String                    @unique
+  name                    String
+  passwordHash            String
+  role                    Role                      @default(CUSTOMER)
+  createdAt               DateTime                  @default(now()) @db.Timestamptz(3)
+  sessions                Session[]
+  addresses               Address[]
+  cart                    Cart?
+  orders                  Order[]
+  ageChallenges           AgeChallenge[]
+  ageVerifications        AgeVerification[]
+  ageCredentialRequests   AgeCredentialRequest[]    @relation("AgeCredentialRequestOwner")
+  operatedAgeRequests     AgeCredentialRequest[]    @relation("AgeCredentialRequestOperator")
+  ageCredentialDeliveries AgeCredentialDelivery[]
+  ageCredentialClaims     AgeCredentialClaim[]
+  ageEvidence             AgeVerificationEvidence[]
+  lotRequests             LotCredentialRequest[]    @relation("LotRequestOwner")
+  operatedLotRequests     LotCredentialRequest[]    @relation("LotRequestOperator")
+  lotEvidence             LotVerificationEvidence[]
+}
+
+model Session {
+  id        String   @id
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Address {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name   String
+  phone  String
+  line   String
+  city   String
+
+  @@index([userId])
+}
+
+model Category {
+  id       String    @id @default(uuid()) @db.Uuid
+  slug     String    @unique
+  name     String
+  products Product[]
+}
+
+model Product {
+  id               String              @id @default(uuid()) @db.Uuid
+  slug             String              @unique
+  name             String
+  subtitle         String
+  description      String
+  price            BigInt
+  stock            Int
+  weight           String
+  origin           String
+  art              String
+  tone             String
+  categoryId       String              @db.Uuid
+  category         Category            @relation(fields: [categoryId], references: [id])
+  requiresAgeProof Boolean             @default(false)
+  minimumAge       Int                 @default(0)
+  published        Boolean             @default(true)
+  lots             Lot[]
+  cartItems        CartItem[]
+  orderItems       OrderItem[]
+  movements        InventoryMovement[]
+
+  @@index([categoryId, published])
+}
+
+model Lot {
+  id                String            @id @default(uuid()) @db.Uuid
+  productId         String            @db.Uuid
+  product           Product           @relation(fields: [productId], references: [id])
+  lotCode           String
+  status            LotStatus         @default(DRAFT)
+  certificateStatus CertificateStatus @default(NONE)
+  expiresAt         DateTime?         @db.Timestamptz(3)
+  stock             Int               @default(0)
+  revokedAt         DateTime?         @db.Timestamptz(3)
+  revocationReason  String?
+  /// Legacy pilot columns. Verification trust is derived from LotCredential/LotProof.
+  issuerKeyId       String?
+  circuitVersion    Int               @default(1)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+  credentials       LotCredential[]
+  proofs            LotProof[]
+  orderItems        OrderItem[]
+
+  credentialRequests LotCredentialRequest[]
+
+  @@unique([productId, lotCode])
+  @@index([productId, status, lotCode])
+}
+
+model AgeCredentialRequest {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  userId             String                     @db.Uuid
+  user               User                       @relation("AgeCredentialRequestOwner", fields: [userId], references: [id], onDelete: Cascade)
+  status             AgeCredentialRequestStatus @default(PENDING)
+  operatorId         String?                    @db.Uuid
+  operator           User?                      @relation("AgeCredentialRequestOperator", fields: [operatorId], references: [id], onDelete: SetNull)
+  reviewedAt         DateTime?                  @db.Timestamptz(3)
+  issuedAt           DateTime?                  @db.Timestamptz(3)
+  expiresAt          DateTime?                  @db.Timestamptz(3)
+  revokedAt          DateTime?                  @db.Timestamptz(3)
+  revocationReason   String?
+  issuerKeyId        String?
+  credentialId       String?                    @unique @db.Uuid
+  circuitVersion     Int                        @default(1)
+  createdAt          DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                   @updatedAt @db.Timestamptz(3)
+  delivery           AgeCredentialDelivery?
+  claims             AgeCredentialClaim[]
+  verificationMethod String?
+  fictionalReference String?
+  recordSubmittedAt  DateTime?                  @db.Timestamptz(3)
+  recordReviewedAt   DateTime?                  @db.Timestamptz(3)
+  consentAt          DateTime?                  @db.Timestamptz(3)
+  evidenceRevision   Int                        @default(0)
+  evidence           AgeVerificationEvidence[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([operatorId, reviewedAt])
+}
+
+model AgeVerificationEvidence {
+  id                String               @id @default(uuid()) @db.Uuid
+  requestId         String               @db.Uuid
+  ownerUserId       String               @db.Uuid
+  request           AgeCredentialRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  owner             User                 @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  storageKey        String               @unique @db.Uuid
+  originalName      String
+  detectedMimeType  String
+  size              Int
+  sha256            String
+  encryptionVersion Int                  @default(1)
+  createdAt         DateTime             @default(now()) @db.Timestamptz(3)
+  reviewedAt        DateTime?            @db.Timestamptz(3)
+  deletedAt         DateTime?            @db.Timestamptz(3)
+
+  @@index([requestId, deletedAt])
+  @@index([ownerUserId, createdAt])
+}
+
+model AgeCredentialDelivery {
+  id           String               @id @default(uuid()) @db.Uuid
+  requestId    String               @unique @db.Uuid
+  userId       String               @db.Uuid
+  credentialId String               @unique @db.Uuid
+  ciphertext   String
+  iv           String
+  authTag      String
+  keyVersion   Int                  @default(1)
+  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+  request      AgeCredentialRequest @relation(fields: [requestId], references: [id], onDelete: Restrict, map: "AgeCredentialDelivery_request_fkey")
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Restrict, map: "AgeCredentialDelivery_user_fkey")
+  claims       AgeCredentialClaim[]
+
+  @@index([userId, createdAt])
+}
+
+model AgeCredentialClaim {
+  id             String                @id @default(uuid()) @db.Uuid
+  deliveryId     String                @db.Uuid
+  requestId      String                @db.Uuid
+  userId         String                @db.Uuid
+  credentialId   String                @db.Uuid
+  credentialType String                @default("AGE")
+  tokenHash      String                @unique
+  status         String                @default("ACTIVE")
+  expiresAt      DateTime              @db.Timestamptz(3)
+  claimedAt      DateTime?             @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  delivery       AgeCredentialDelivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict, map: "AgeCredentialClaim_delivery_fkey")
+  request        AgeCredentialRequest  @relation(fields: [requestId], references: [id], onDelete: Restrict, map: "AgeCredentialClaim_request_fkey")
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Restrict, map: "AgeCredentialClaim_user_fkey")
+
+  @@index([userId, status, expiresAt])
+  @@index([deliveryId, status])
+}
+
+model LotCredentialRequest {
+  id                String                     @id @default(uuid()) @db.Uuid
+  userId            String                     @db.Uuid
+  user              User                       @relation("LotRequestOwner", fields: [userId], references: [id], onDelete: Restrict)
+  lotId             String                     @db.Uuid
+  lot               Lot                        @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  productId         String                     @db.Uuid
+  lotCode           String
+  status            LotCredentialRequestStatus @default(PENDING_EVIDENCE)
+  operatorId        String?                    @db.Uuid
+  operator          User?                      @relation("LotRequestOperator", fields: [operatorId], references: [id], onDelete: Restrict)
+  recordSubmittedAt DateTime?                  @db.Timestamptz(3)
+  recordReviewedAt  DateTime?                  @db.Timestamptz(3)
+  consentAt         DateTime?                  @db.Timestamptz(3)
+  evidenceRevision  Int                        @default(0)
+  reason            String?
+  credentialId      String?                    @unique @db.Uuid
+  issuerKeyId       String?
+  circuitVersion    Int                        @default(1)
+  issuedAt          DateTime?                  @db.Timestamptz(3)
+  expiresAt         DateTime?                  @db.Timestamptz(3)
+  revokedAt         DateTime?                  @db.Timestamptz(3)
+  createdAt         DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                   @updatedAt @db.Timestamptz(3)
+  evidence          LotVerificationEvidence[]
+
+  @@index([userId, createdAt])
+  @@index([lotId, status])
+  @@index([status, createdAt])
+}
+
+model LotVerificationEvidence {
+  id                String               @id @default(uuid()) @db.Uuid
+  requestId         String               @db.Uuid
+  ownerUserId       String               @db.Uuid
+  request           LotCredentialRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  owner             User                 @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  storageKey        String               @unique @db.Uuid
+  originalName      String
+  detectedMimeType  String
+  size              Int
+  sha256            String
+  encryptionVersion Int                  @default(1)
+  createdAt         DateTime             @default(now()) @db.Timestamptz(3)
+  reviewedAt        DateTime?            @db.Timestamptz(3)
+  deletedAt         DateTime?            @db.Timestamptz(3)
+
+  @@index([requestId, deletedAt])
+  @@index([ownerUserId, createdAt])
+}
+
+model LotCredential {
+  id                String              @id @db.Uuid
+  lotId             String              @db.Uuid
+  lot               Lot                 @relation(fields: [lotId], references: [id])
+  commitment        String
+  productIdHash     String
+  lotCodeHash       String
+  policyVersion     Int
+  publicAllowedCode String
+  issuedAt          DateTime            @db.Timestamptz(3)
+  expiresAt         DateTime            @db.Timestamptz(3)
+  issuerId          String              @db.Uuid
+  issuerKeyVersion  Int
+  issuerFingerprint String
+  signature         String
+  status            LotCredentialStatus @default(ACTIVE)
+  revokedAt         DateTime?           @db.Timestamptz(3)
+  revocationReason  String?
+  issuerKeyId       String
+  circuitVersion    Int                 @default(1)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  proof             LotProof?
+
+  @@index([lotId, status, issuedAt])
+  @@index([expiresAt, status])
+}
+
+model LotProof {
+  id                 String         @id @default(uuid()) @db.Uuid
+  lotId              String         @db.Uuid
+  lot                Lot            @relation(fields: [lotId], references: [id])
+  credentialId       String         @unique @db.Uuid
+  credential         LotCredential  @relation(fields: [credentialId], references: [id])
+  proof              Json
+  publicSignals      Json
+  proofHash          String
+  manifestSha256     String
+  signalSchemaSha256 String
+  generatedAt        DateTime       @db.Timestamptz(3)
+  verifiedAt         DateTime       @db.Timestamptz(3)
+  status             LotProofStatus @default(ACTIVE)
+  circuitVersion     Int            @default(1)
+
+  @@index([lotId, status, verifiedAt])
+}
+
+model Cart {
+  id     String     @id @default(uuid()) @db.Uuid
+  userId String     @unique @db.Uuid
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items  CartItem[]
+}
+
+model CartItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  cartId    String  @db.Uuid
+  cart      Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+
+  @@unique([cartId, productId])
+  @@index([productId])
+}
+
+model Order {
+  id                String              @id @default(uuid()) @db.Uuid
+  code              String              @unique
+  userId            String              @db.Uuid
+  user              User                @relation(fields: [userId], references: [id])
+  idempotencyKey    String              @db.Uuid
+  requestHash       String
+  address           Json
+  total             BigInt
+  status            OrderStatus         @default(PENDING)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  codCollectedAt    DateTime?           @db.Timestamptz(3)
+  ageRequestHash    String?
+  ageVerificationId String?             @unique @db.Uuid
+  ageVerification   AgeVerification?    @relation(fields: [ageVerificationId], references: [id])
+  items             OrderItem[]
+  history           OrderHistory[]
+  movements         InventoryMovement[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+}
+
+model AgeChallenge {
+  id               String             @id @default(uuid()) @db.Uuid
+  userId           String             @db.Uuid
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nonceField       String             @unique
+  cartSnapshotHash String
+  cutoffDay        Int
+  minimumAge       Int
+  requestHash      String
+  issuedAt         DateTime           @db.Timestamptz(3)
+  expiresAt        DateTime           @db.Timestamptz(3)
+  status           AgeChallengeStatus @default(ISSUED)
+  verifiedAt       DateTime?          @db.Timestamptz(3)
+  consumedAt       DateTime?          @db.Timestamptz(3)
+  verification     AgeVerification?
+
+  @@index([userId, issuedAt])
+  @@index([expiresAt, status])
+}
+
+model AgeVerification {
+  id                  String       @id @default(uuid()) @db.Uuid
+  challengeId         String       @unique @db.Uuid
+  challenge           AgeChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  userId              String       @db.Uuid
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nullifier           String       @unique
+  credentialId        String       @db.Uuid
+  commitment          String
+  credentialExpiresAt DateTime     @db.Timestamptz(3)
+  issuerId            String       @db.Uuid
+  issuerKeyVersion    Int
+  issuerFingerprint   String
+  proofHash           String
+  verifiedAt          DateTime     @db.Timestamptz(3)
+  expiresAt           DateTime     @db.Timestamptz(3)
+  consumedAt          DateTime?    @db.Timestamptz(3)
+  order               Order?
+
+  @@index([userId, verifiedAt])
+  @@index([expiresAt])
+}
+
+model OrderItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  orderId   String  @db.Uuid
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id])
+  name      String
+  quantity  Int
+  unitPrice BigInt
+  lotId     String? @db.Uuid
+  lot       Lot?    @relation(fields: [lotId], references: [id])
+  lotCode   String?
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([lotId])
+}
+
+model OrderHistory {
+  id        String      @id @default(uuid()) @db.Uuid
+  orderId   String      @db.Uuid
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  createdAt DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([orderId, createdAt])
+}
+
+model InventoryMovement {
+  id        String   @id @default(uuid()) @db.Uuid
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id])
+  orderId   String?  @db.Uuid
+  order     Order?   @relation(fields: [orderId], references: [id])
+  delta     Int
+  reason    String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([orderId, productId, reason])
+  @@index([productId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String   @db.Uuid
+  action    String
+  objectId  String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([actorId, createdAt])
+}

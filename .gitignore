@@ -1,0 +1,37 @@
+# Dependencies và build output
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/.vite/
+
+# Biến môi trường
+.env
+.env.*
+!.env.example
+
+# Database backup và file làm việc
+.work/
+*.dump
+*.backup
+
+# Dữ liệu và khóa riêng
+*.pkcs8.pem
+*.credential.private.json
+*.private.json
+
+# File tạm
+*.log
+~$*
+**/~$*
+# Local toolchain and caches
+.tools/
+**/.tools/
+.npm/
+npm-cache/
+**/npm-cache/
+
+# Dependencies
+node_modules/
+**/node_modules/

@@ -1,0 +1,60 @@
+{
+  "recordedAt": "2026-09-29",
+  "historicalSnapshot": true,
+  "supersededBy": "../g5/test-results.json",
+  "environment": {
+    "node": "24.21.0",
+    "database": "PostgreSQL 17.6-alpine",
+    "testSchema": "g2_test"
+  },
+  "commands": [
+    {
+      "command": "npm test",
+      "status": "PASS",
+      "tests": 50,
+      "failed": 0,
+      "groups": {
+        "search": 4,
+        "walletProtocol": 10,
+        "g2": 14,
+        "g3Age": 13,
+        "g4Lot": 9
+      }
+    },
+    {
+      "command": "npm run build",
+      "status": "PASS",
+      "notes": "web + wallet Vite production builds and tsc --noEmit"
+    },
+    {
+      "command": ".tools/node-v24.21.0-win-x64/node.exe circuits/scripts/verify-owner.mjs",
+      "status": "PASS",
+      "notes": "AGE and LOT artifacts/owner keys/proofs verified; no artifacts changed"
+    }
+  ],
+  "g1Baseline": {
+    "matched": 46,
+    "checked": 46,
+    "manifestSha256": "c942cffd8a412652f8df829fa842c3cfee972b0129d08b690fdada8cd7c511dc",
+    "ageZkeySha256": "f23ed79af1b4fb14f055a586ea8f6e8a396e86ea95df1a1e1799c0477775f95c",
+    "ageVerificationKeySha256": "eb674307b5de962cfedc9a5e63fce7d2e8820bef109bafd571a15295f05a7015"
+  },
+  "manualUi": {
+    "walletUrl": "http://127.0.0.1:5174/",
+    "status": "PASS_READ_ONLY",
+    "consoleWarningsOrErrors": 0,
+    "ownerCredentialEndToEnd": "PENDING OWNER MANUAL TEST"
+  },
+  "benchmark": {
+    "instrumentation": [
+      "wasmLoadMs",
+      "zkeyLoadMs",
+      "proofMs",
+      "walletTotalMs",
+      "serverVerificationMs",
+      "consentToApiResultMs"
+    ],
+    "ownerCredentialResult": null,
+    "reason": "No Issuer private key or private AGE credential was read by the agent; UI reports real per-device cold/warm values when the owner runs the checklist."
+  }
+}

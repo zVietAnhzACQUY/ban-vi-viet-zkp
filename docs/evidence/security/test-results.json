@@ -1,0 +1,109 @@
+{
+  "assessment": {
+    "project": "Ban Vi Viet",
+    "date": "2026-10-04",
+    "timezone": "Asia/Saigon",
+    "overallRisk": "MEDIUM",
+    "method": "controlled-local-security-review",
+    "dataSafety": {
+      "databaseWritesPerformed": false,
+      "databaseResetOrMigrationPerformed": false,
+      "privateKeysRead": false,
+      "credentialsPrinted": false,
+      "privateInputsRead": false,
+      "witnessFilesRead": false,
+      "onlineScannerUsed": false
+    }
+  },
+  "scope": {
+    "web": "http://127.0.0.1:5173",
+    "wallet": "http://127.0.0.1:5174",
+    "api": "http://127.0.0.1:3001",
+    "database": "PostgreSQL local project database",
+    "sourceReviewed": true
+  },
+  "findings": {
+    "critical": 0,
+    "high": 0,
+    "medium": 4,
+    "low": 1,
+    "informational": 8,
+    "ids": ["SEC-001", "SEC-002", "SEC-003", "SEC-004", "SEC-005"]
+  },
+  "checks": [
+    {
+      "id": "DEP-ROOT-AUDIT",
+      "command": "npm audit --json",
+      "workspace": "root",
+      "status": "PASS",
+      "exitCode": 0,
+      "summary": {"totalDependencies": 96, "totalVulnerabilities": 0, "critical": 0, "high": 0, "moderate": 0, "low": 0}
+    },
+    {
+      "id": "DEP-APPS-AUDIT",
+      "command": "npm audit --json",
+      "workspace": "apps",
+      "status": "PASS",
+      "exitCode": 0,
+      "summary": {"totalDependencies": 354, "totalVulnerabilities": 0, "critical": 0, "high": 0, "moderate": 0, "low": 0}
+    },
+    {
+      "id": "BUILD-APPS",
+      "command": "npm run build",
+      "workspace": "apps",
+      "runtime": "Node 24.21.0 pinned toolchain",
+      "status": "PASS",
+      "exitCode": 0,
+      "notes": ["Web build passed", "Wallet build passed", "TypeScript noEmit passed", "Large bundle warnings present"]
+    },
+    {
+      "id": "G1-CIRCUIT-TEST",
+      "command": ".tools/node-v24.21.0-win-x64/node.exe circuits/scripts/test.mjs",
+      "workspace": "root",
+      "runtime": "Node 24.21.0",
+      "status": "PASS",
+      "exitCode": 0,
+      "passedChecks": 71,
+      "note": "No setup/proof ceremony is implied by this result."
+    },
+    {
+      "id": "API-INTEGRATION",
+      "command": "npm test",
+      "workspace": "apps",
+      "status": "NOT_TESTED",
+      "reason": "Docker Desktop/PostgreSQL unavailable; initial sandboxed attempt also could not obtain the Prisma schema engine. No database mutation was attempted."
+    },
+    {
+      "id": "LOCAL-HTTP-REACHABILITY",
+      "status": "NOT_TESTED",
+      "observations": [
+        {"target": "http://127.0.0.1:3001/api/health", "result": "CONNECTION_REFUSED"},
+        {"target": "http://127.0.0.1:5173", "result": "CONNECTION_REFUSED"},
+        {"target": "http://127.0.0.1:5174", "result": "CONNECTION_REFUSED"}
+      ]
+    },
+    {
+      "id": "DATABASE-INTEGRITY-SNAPSHOT",
+      "status": "NOT_TESTED",
+      "reason": "PostgreSQL service unavailable",
+      "writesPerformed": false
+    },
+    {
+      "id": "SECRET-PATH-REVIEW",
+      "status": "PASS_WITH_FINDING",
+      "summary": "Environment file was identified by name but not read; private-key marker was not found in project source; ignored witness intermediates were found and not opened.",
+      "finding": "SEC-004"
+    },
+    {
+      "id": "STATIC-CONTROL-REVIEW",
+      "status": "PASS_WITH_FINDINGS",
+      "covered": ["authentication", "authorization", "IDOR", "input validation", "CSRF", "CORS", "cookies", "wallet postMessage", "AGE", "LOT", "checkout", "database constraints", "deployment configuration"],
+      "findings": ["SEC-001", "SEC-002", "SEC-003", "SEC-004", "SEC-005"]
+    }
+  ],
+  "environment": {
+    "dockerDesktop": "NOT_RUNNING",
+    "services": {"web": "OFFLINE", "wallet": "OFFLINE", "api": "OFFLINE", "postgresql": "OFFLINE"},
+    "productionDeploymentObserved": false
+  }
+}

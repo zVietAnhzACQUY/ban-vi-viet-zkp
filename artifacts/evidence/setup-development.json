@@ -1,0 +1,63 @@
+{
+  "createdAt": "2026-09-26T10:01:00.930Z",
+  "stage": "development",
+  "status": "DEVELOPMENT_ONLY_PENDING_OWNER",
+  "curve": "bn128",
+  "power": 11,
+  "contributions": [
+    {
+      "phase": 1,
+      "hash": "92941650223a43585ae3d0b690ef72abf7a2e34f454c51fb99ffed71462f0380b84e9b937e20a0666620b02709b717d13fb53f33a69cbb01306ea2cf5060a550"
+    },
+    {
+      "phase": 2,
+      "type": "AGE",
+      "hash": "7d15186c93de8a0ce201b656473c91a289485679902ca4ca24adbe0a37a2479920e2fe1024380f0aedfe3aee05273675a9a2b9366dd9e06d202dbc4d0fd8c1a1"
+    },
+    {
+      "phase": 2,
+      "type": "LOT",
+      "hash": "f1ad1f38123e21833df43dcac87b7fa4db8906d9a3b7cac5c3cef39a15ebbcd7ad8ebeeff9d80ea06f6f2cce0bbf6f04cc623ba7e4e572d8db84cfbd7ceea6db"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "AGE",
+      "zkey": {
+        "path": ".work/setup/development/age_contributed.zkey",
+        "sha256": "613b3352c3368ed6ab05d9057be88d918c76581b0c6a5c56ef83db8291b05a4c"
+      },
+      "verificationKey": {
+        "path": "artifacts/development/age.verification_key.json",
+        "sha256": "d7d4d73eb06d3c261b500892b3c6a4a0a3b347d926f75de4d7729461c4932c90"
+      },
+      "r1cs": {
+        "path": ".work/build/age/age_eligibility.r1cs",
+        "sha256": "a92285505ff67a9c5a3c5f9703c90b2596ab96bf99e823fccfa10bae44b7eea3"
+      }
+    },
+    {
+      "type": "LOT",
+      "zkey": {
+        "path": ".work/setup/development/lot_contributed.zkey",
+        "sha256": "a9c1daadf8255ee214ec88dd207cb8eb07b5ccbe5f4d034efabb028a914008c4"
+      },
+      "verificationKey": {
+        "path": "artifacts/development/lot.verification_key.json",
+        "sha256": "a0fe91e4eec1b9b926fd6a3f2792a7dc2954b1b1a8d389212dbcdd169509ae62"
+      },
+      "r1cs": {
+        "path": ".work/build/lot/lot_origin.r1cs",
+        "sha256": "855a5b9dd0124e7d4cbfff5257aa8d9967be4058a45760b143e7c333c68cf626"
+      }
+    }
+  ],
+  "ptau": {
+    "path": ".work/setup/development/pot_final.ptau",
+    "sha256": "bfd4a9f9d23e07343cd8b6e9c8f3797a7c5c5e6ea9515f28f81941d84d3c0602"
+  },
+  "transcript": {
+    "path": "artifacts/evidence/setup-development.log",
+    "sha256": "7028650801153b1426826326ef824280a0feb12ad23d80ad8d787961488ad4bd"
+  }
+}
