@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { issueAgeCredential } from "../../issuer/issue-age";
 import {
   AGE_ISSUER_ID,
@@ -534,4 +535,31 @@ test("Public Wallet response schema rejects private credential fields", () => {
     },
   };
   assert.equal(ageProofResponseSchema.safeParse(leaked).success, false);
+});
+
+test("Wallet UI keeps an independent identity and safe recovery hierarchy", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(app, /<strong>Ví xác minh<\/strong>/);
+  assert.match(app, /Lưu giữ thông tin xác minh và tạo bằng chứng theo sự đồng ý của bạn/);
+  assert.match(app, /Nâng cao \/ Khôi phục từ tệp/);
+  assert.match(html, /Ví xác minh · Ví ZKP riêng tư/);
+  assert.doesNotMatch(html, /Bản Vị Việt/);
+});
+
+test("Wallet UI explains disclosure and uses an in-app destructive confirmation", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(app, /Website chỉ nhận kết quả đủ hoặc không đủ tuổi/);
+  assert.match(app, /Không gồm ngày sinh hoặc dữ liệu bí mật/);
+  assert.match(app, /role="dialog"/);
+  assert.match(app, /Xóa credential khỏi thiết bị\?/);
+  assert.doesNotMatch(app, /window\.confirm/);
+});
+
+test("Wallet UI only offers fixed Website return links after terminal flows", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(app, /new URL\("\/tai-khoan", allowedWebsite\)/);
+  assert.match(app, /claimComplete &&/);
+  assert.match(app, /requestFinished &&/);
+  assert.doesNotMatch(app, /returnUrl/);
 });
