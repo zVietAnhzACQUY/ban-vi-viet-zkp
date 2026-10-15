@@ -35,6 +35,7 @@ export type Address = {
   phone: string;
   line: string;
   city: string;
+  isDefault?: boolean;
 };
 export type Cart = {
   items: { product: Product; quantity: number }[];
@@ -45,13 +46,16 @@ export type AgeVerificationResult = {
   status: "VERIFIED";
   verificationId: string;
   challengeId: string;
-  nullifier: string;
   verifiedAt: string;
   expiresAt: string;
-  serverVerificationMs: number;
+  requestHash: string;
+  cartSnapshotHash: string;
+  serverVerificationMs?: number;
 };
 export type AgeCredentialStatus = {
   recordSubmitted: boolean;
+  walletReceived: boolean;
+  walletReceivedAt: string | null;
   id: string;
   status: "PENDING" | "APPROVED" | "ISSUING" | "ISSUED" | "REJECTED" | "REVOKED" | "EXPIRED";
   createdAt: string;
@@ -101,32 +105,55 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
+export class ApiTimeoutError extends Error {
+  constructor() {
+    super("Không nhận được phản hồi từ máy chủ. Vui lòng thử lại.");
+    this.name = "ApiTimeoutError";
+  }
+}
 export async function api<T = any>(
   url: string,
   method = "GET",
   data?: unknown,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<T> {
-  if (method !== "GET" && !csrf) {
-    const r = await fetch("/api/csrf");
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  const timer = options.timeoutMs
+    ? window.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs)
+    : 0;
+  try {
+    if (method !== "GET" && !csrf) {
+      const r = await fetch("/api/csrf", { signal: controller.signal });
+      const d = await r.json();
+      csrf = d.token;
+    }
+    const r = await fetch("/api" + url, {
+      method,
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: {
+        ...(data !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(method !== "GET" ? { "x-csrf-token": csrf } : {}),
+      },
+      body: data === undefined ? undefined : JSON.stringify(data),
+    });
     const d = await r.json();
-    csrf = d.token;
+    if (!r.ok)
+      throw new ApiError(
+        d.message || "Không thể kết nối. Vui lòng thử lại.",
+        d.code || "REQUEST_FAILED",
+        r.status,
+      );
+    return d;
+  } catch (error) {
+    if (timedOut) throw new ApiTimeoutError();
+    throw error;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
   }
-  const r = await fetch("/api" + url, {
-    method,
-    credentials: "same-origin",
-    headers: {
-      ...(data !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(method !== "GET" ? { "x-csrf-token": csrf } : {}),
-    },
-    body: data === undefined ? undefined : JSON.stringify(data),
-  });
-  const d = await r.json();
-  if (!r.ok)
-    throw new ApiError(
-      d.message || "Không thể kết nối. Vui lòng thử lại.",
-      d.code || "REQUEST_FAILED",
-      r.status,
-    );
-  return d;
 }
 

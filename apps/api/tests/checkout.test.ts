@@ -634,15 +634,16 @@ try {
       const requestId = created.json().id;
       const minimalStatus = await customer.request("GET", "/me/age-credential-status");
       assert.equal(minimalStatus.statusCode, 200, minimalStatus.body);
-      assert.deepEqual(Object.keys(minimalStatus.json()).sort(), ["createdAt", "id", "recordSubmitted", "status"]);
+      assert.deepEqual(Object.keys(minimalStatus.json()).sort(), ["createdAt", "id", "recordSubmitted", "status", "walletReceived", "walletReceivedAt"]);
+      assert.equal(minimalStatus.json().walletReceived, false);
       assert.equal(minimalStatus.json().id, requestId);
       const owned = await customer.request("GET", "/me/age-credential-requests/" + requestId);
       assert.equal(owned.statusCode, 200, owned.body);
       assert.equal(owned.json().id, requestId);
-      assert.deepEqual(Object.keys(owned.json()).sort(), ["createdAt", "id", "recordSubmitted", "status"]);
+      assert.deepEqual(Object.keys(owned.json()).sort(), ["createdAt", "id", "recordSubmitted", "status", "walletReceived", "walletReceivedAt"]);
       const ownedList = await customer.request("GET", "/me/age-credential-requests");
       assert.equal(ownedList.statusCode, 200, ownedList.body);
-      assert.deepEqual(Object.keys(ownedList.json()[0]).sort(), ["createdAt", "id", "recordSubmitted", "status"]);
+      assert.deepEqual(Object.keys(ownedList.json()[0]).sort(), ["createdAt", "id", "recordSubmitted", "status", "walletReceived", "walletReceivedAt"]);
       for (const forbiddenField of ["dob", "privateInputs", "salt", "holderSecret", "witness", "token", "privateKey"])
         assert.equal(owned.body.includes(forbiddenField), false);
       const hiddenFromOther = await other.request("GET", "/me/age-credential-requests/" + requestId);
@@ -695,6 +696,29 @@ try {
       const portalLogin=await app.inject({method:"POST",url:"/api/issuer/auth/login",payload:{email:admin.user.email,password:"Integration@2026"},headers:{cookie:admin.jar,origin:"http://127.0.0.1:5175","x-csrf-token":admin.csrf}});
       assert.equal(portalLogin.statusCode,200);
       assert.equal(portalLogin.json().user.role,"ISSUER_OPERATOR");
+      const credentialId = randomUUID();
+      const receivedAt = new Date();
+      await db.ageCredentialRequest.update({ where: { id: requestId }, data: {
+        status: "ISSUED", credentialId, issuedAt: receivedAt,
+        expiresAt: new Date(receivedAt.getTime() + 86_400_000), issuerKeyId: "issuer:v1",
+      }});
+      const delivery = await db.ageCredentialDelivery.create({ data: {
+        requestId, userId: customer.user.id, credentialId,
+        ciphertext: "fixture", iv: "fixture", authTag: "fixture",
+      }});
+      await db.ageCredentialClaim.create({ data: {
+        deliveryId: delivery.id, requestId, userId: customer.user.id, credentialId,
+        credentialType: "AGE", tokenHash: randomBytes(32).toString("hex"),
+        status: "CLAIMED", expiresAt: new Date(receivedAt.getTime() + 300_000), claimedAt: receivedAt,
+      }});
+      const afterAck = await customer.request("GET", "/me/age-credential-status");
+      assert.equal(afterAck.json().status, "ISSUED");
+      assert.equal(afterAck.json().walletReceived, true);
+      assert.equal(new Date(afterAck.json().walletReceivedAt).getTime(), receivedAt.getTime());
+      const otherCannotReadReceived = await other.request("GET", "/me/age-credential-requests/" + requestId);
+      assert.equal(otherCannotReadReceived.statusCode, 404);
+      for (const secret of ["tokenHash", "ciphertext", "authTag", "credential", "holderSecret", "salt", "witness"])
+        assert.equal(afterAck.body.includes(secret), false);
     });
     await t.test("concurrent AGE requests create one open request", async () => {
       const customer = await client();

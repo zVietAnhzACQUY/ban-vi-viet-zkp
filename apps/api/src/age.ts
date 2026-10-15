@@ -25,7 +25,7 @@ import {
   type AgeCredentialMetadata,
   type CartHashItem,
 } from "../../shared/g3.js";
-import { fail, hash } from "./commerce.js";
+import { AppError, fail, hash } from "./commerce.js";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const manifestPath = root + "artifacts/manifest.json";
@@ -247,6 +247,14 @@ export function createAgeService(
     if (!secureEqual(expectedRequestHash, existingChallenge.requestHash))
       fail("REQUEST_HASH_INVALID", "requestHash không khớp nội dung giỏ.");
 
+    if (
+      existingChallenge.status === "VERIFIED" &&
+      existingChallenge.verification &&
+      !existingChallenge.verification.consumedAt &&
+      existingChallenge.verification.expiresAt > checkTime
+    )
+      return existingChallenge.verification;
+
     const metadata = bundle.credential.metadata as AgeCredentialMetadata;
     if (
       metadata.issuerId !== issuer.issuerId ||
@@ -354,6 +362,8 @@ export function createAgeService(
         if (locked.expiresAt <= now())
           fail("CHALLENGE_EXPIRED", "Challenge đã hết hạn.");
         if (locked.verification) {
+          if (!locked.verification.consumedAt && locked.verification.expiresAt > now())
+            return locked.verification;
           fail("CHALLENGE_REPLAY", "Challenge đã được xác minh trước đó.");
         }
         if (locked.status !== "ISSUED")
@@ -388,10 +398,74 @@ export function createAgeService(
     }
   }
 
+  async function recoverForCheckout(userId: string) {
+    const checkTime = now();
+    let cart: Awaited<ReturnType<typeof currentCart>>;
+    try {
+      cart = await currentCart(db, userId);
+    } catch (error) {
+      if (error instanceof AppError && ["CART_EMPTY", "AGE_NOT_REQUIRED"].includes(error.code))
+        return null;
+      throw error;
+    }
+    const currentCutoff = cutoffDay(checkTime, cart.minimumAge);
+    const candidates = await db.ageVerification.findMany({
+      where: {
+        userId,
+        consumedAt: null,
+        expiresAt: { gt: checkTime },
+        credentialExpiresAt: { gt: checkTime },
+        challenge: {
+          status: "VERIFIED",
+          expiresAt: { gt: checkTime },
+          cartSnapshotHash: cart.snapshotHash,
+          minimumAge: cart.minimumAge,
+          cutoffDay: currentCutoff,
+        },
+      },
+      include: { challenge: true },
+      orderBy: { verifiedAt: "desc" },
+      take: 5,
+    });
+    for (const verification of candidates) {
+      const expectedRequestHash = await ageRequestHash(
+        verification.challenge.nonceField,
+        await userIdHash(userId),
+        cart.snapshotHash,
+        currentCutoff,
+      );
+      if (!secureEqual(expectedRequestHash, verification.challenge.requestHash)) continue;
+      if (
+        verification.issuerId !== issuer.issuerId ||
+        verification.issuerKeyVersion !== issuer.keyVersion ||
+        verification.issuerFingerprint !== issuer.fingerprint
+      ) continue;
+      const lifecycle = await db.ageCredentialRequest.findUnique({
+        where: { credentialId: verification.credentialId },
+        select: {
+          userId: true, status: true, operatorId: true, expiresAt: true,
+          issuerKeyId: true, circuitVersion: true,
+        },
+      });
+      if (lifecycle && (
+        lifecycle.userId !== userId || lifecycle.status !== "ISSUED" ||
+        !lifecycle.operatorId || !lifecycle.expiresAt || lifecycle.expiresAt <= checkTime ||
+        lifecycle.issuerKeyId !== `${issuer.issuerId}:v${issuer.keyVersion}` ||
+        lifecycle.circuitVersion !== 1
+      )) continue;
+      const allowUntracked = process.env.NODE_ENV !== "production" &&
+        (process.env.G2_TEST === "1" || process.env.ALLOW_UNTRACKED_AGE_CREDENTIALS === "1");
+      if (!lifecycle && !allowUntracked) continue;
+      return verification;
+    }
+    return null;
+  }
+
   return {
     trust: issuer,
     challenge,
     verifyForCheckout,
+    recoverForCheckout,
     artifact(path: "wasm" | "zkey") {
       return createReadStream(path === "wasm" ? wasmPath : zkeyPath);
     },

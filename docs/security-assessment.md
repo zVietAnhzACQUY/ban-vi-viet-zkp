@@ -86,6 +86,17 @@ Có 4 phát hiện mức Medium và 1 mức Low. Ba ưu tiên cao nhất là: kh
 
 ### SEC-005 — Rate limiting chỉ ở bộ nhớ tiến trình và chưa có cấu hình proxy rõ ràng
 
+Hệ thống áp dụng rate limit theo IP cho endpoint đăng nhập và sử dụng thông báo lỗi thống nhất. Bộ đếm sử dụng bộ nhớ cục bộ nên phù hợp với môi trường pilot một API instance; triển khai nhiều instance cần shared store và chính sách chống brute force nâng cao.
+
+Website và Issuer login giữ ngưỡng 15 request/phút/IP; register 10/phút/IP; đổi mật khẩu 8/5 phút/IP. Website và Issuer dùng chung dummy Argon2 hash được tạo một lần khi khởi tạo API, không tạo mỗi request. Đây không phải account limiter hoặc khóa tài khoản. Local không bật trustProxy nên X-Forwarded-For do client gửi không thay đổi key req.ip; qua Vite/reverse proxy có thể gom nhiều khách vào IP proxy. Không coi đây là xác nhận topology production đã an toàn.
+
+Kiểm chứng bản sửa tối thiểu ngày 12/10/2026:
+
+- `apps/api/tests/login-rate-limit.test.ts`: Fastify inject với users/session hoàn toàn trong RAM, không dùng PostgreSQL; login hợp lệ, email thiếu/mật khẩu sai tương đương, chặn role sai, không trả passwordHash, request thứ 16 trả 429/Retry-After trên cả hai route, X-Forwarded-For giả không đổi bucket, IP kết nối khác có bucket riêng. 4/4 test PASS.
+- Bộ hồi quy tập trung không dùng PostgreSQL: 69/69 PASS. Build Website/Wallet/Issuer Portal và TypeScript PASS; còn cảnh báo bundle lớn. G1 static hash 45/45 giữ nguyên.
+- `npm --prefix apps test` đã chạy nhưng exit 1 sau test mới, tại checkpoint migrate deploy của runner; integration suite chưa hoàn tất. TCP local 5434 không kết nối được. Migration status chưa xác nhận, drift bị chặn do database không truy cập được. Không gọi các bước này PASS.
+- Không tạo migration hoặc thay Prisma schema; không ghi PostgreSQL, không thêm HMAC/account limiter/audit login/backoff/Redis/CAPTCHA hoặc thay cookie/session/role/ZKP.
+
 - Mức độ: **Low**
 - Vị trí: `apps/api/src/app.ts:92-108` và cấu hình từng route auth/AGE
 - CWE: CWE-307 (Improper Restriction of Excessive Authentication Attempts)

@@ -32,5 +32,5 @@ test("operator login, home, denied and review have no commerce links",()=>{
  const evidence=readFileSync(new URL("./evidence.tsx",import.meta.url),"utf8");assert.match(evidence,/customerReturn\(websiteOrigin\(\),"AGE",id\)/);assert.match(evidence,/\{back.label\}/);
  assert.match(app,/navigate\("\/login", \{ replace: true \}\)/);
  assert.equal(app.includes('get("returnUrl")'),false);
- const web=readFileSync(new URL("../../web/src/App.tsx",import.meta.url),"utf8");assert.match(web,/get\("tab"\)==="lots"\?"lots":"products"/);
+ const web=readFileSync(new URL("../../web/src/App.tsx",import.meta.url),"utf8");assert.match(web.replace(/\s+/g,""),/get\("tab"\)==="lots"\?"lots":"products"/);
 });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BusyButton } from "../../shared/BusyButton";
 import {
   Building2,
   CheckCircle2,
@@ -38,6 +39,7 @@ import {
   ageCredentialStore,
   decryptCredential,
   encryptCredential,
+  encryptAndSaveCredential,
   type EncryptedCredential,
 } from "./storage";
 import {
@@ -80,7 +82,9 @@ export default function App() {
   const [claimSaved, setClaimSaved] = useState(false);
   const [claimComplete, setClaimComplete] = useState(false);
   const [showPin, setShowPin] = useState(false);
+  const [unlockError, setUnlockError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
   const [requestFinished, setRequestFinished] = useState<"success" | "rejected" | null>(null);
   const claimToken = useMemo(() => {
     const value = new URLSearchParams(window.location.search).get("claim") || "";
@@ -100,6 +104,9 @@ export default function App() {
   } | null>(null);
   const pendingRequestId = useRef<string | null>(null);
   const inactivityTimer = useRef<number | null>(null);
+  const unlockedPassphrase = useRef("");
+  const unlockDialog = useRef<HTMLElement | null>(null);
+  const unlockInput = useRef<HTMLInputElement | null>(null);
 
   async function loadStored() {
     const value = await ageCredentialStore.get();
@@ -173,6 +180,55 @@ export default function App() {
     return () => window.removeEventListener("message", receive);
   }, [allowedOrigins]);
 
+  const checkoutUnlockOpen = Boolean(request && stored.state === "locked");
+  useEffect(() => {
+    if (!checkoutUnlockOpen) return;
+    setUnlockError("");
+    const focusTimer = window.setTimeout(() => unlockInput.current?.focus(), 0);
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        rejectRequest();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = [...(unlockDialog.current?.querySelectorAll<HTMLElement>(
+        'input,button,[href],[tabindex]:not([tabindex="-1"])',
+      ) ?? [])].filter((element) => !element.hasAttribute("disabled"));
+      if (!controls.length) return;
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener("keydown", trapFocus);
+    };
+  }, [checkoutUnlockOpen]);
+
+  useEffect(() => {
+    if (!request || stored.state !== "empty") return;
+    markRequestProcessed(request.requestId);
+    respond({
+      type: AGE_WALLET_RESPONSE_TYPE,
+      protocolVersion: AGE_WALLET_PROTOCOL_VERSION,
+      status: "ERROR",
+      requestId: request.requestId,
+      challengeId: request.challengeId,
+      code: "NO_CREDENTIAL",
+      message: "Ví chưa có thông tin xác minh tuổi.",
+    });
+    pendingRequestId.current = null;
+    setRequest(null);
+    setMessage("Ví chưa có thông tin xác minh tuổi.");
+  }, [request, stored.state]);
+
   function respond(response: AgeProofResponse) {
     if (!request || !window.opener) return;
     window.opener.postMessage(response, request.returnOrigin);
@@ -195,10 +251,11 @@ export default function App() {
   async function saveCandidate() {
     if (!candidate) return;
     setError("");
-    if (pin !== pinConfirm) return setError("Hai lần nhập PIN chưa khớp.");
+    if (pin !== pinConfirm) return setError("Hai lần nhập mã khóa chưa khớp.");
     try {
       await validateAgeCredential(candidate);
       await ageCredentialStore.save(await encryptCredential(candidate, pin));
+      unlockedPassphrase.current = pin;
       setStored({ state: "valid", credential: candidate });
       setCandidate(null);
       setPin("");
@@ -244,21 +301,26 @@ export default function App() {
       }
       return;
     }
-    if (pin.length < 8 || pin.length > 64)
-      return setError("PIN/passphrase Ví phải có 8–64 ký tự.");
+    if (stored.state === "locked")
+      return setError("Mở khóa Ví trước khi lưu credential đang nhận.");
+    const passphrase = stored.state === "empty" ? pin : unlockedPassphrase.current;
+    if (passphrase.length < 8 || passphrase.length > 64)
+      return setError("Mã khóa Ví phải có 8–64 ký tự.");
     if (stored.state === "empty" && pin !== pinConfirm)
-      return setError("Hai lần nhập PIN chưa khớp.");
+      return setError("Hai lần nhập mã khóa chưa khớp.");
+    if (stored.state === "valid" && !replaceConfirmed)
+      return setError("Hãy xác nhận thay thế credential đang có trong Ví.");
     setClaiming(true);
     try {
-      if (stored.state === "locked") await decryptCredential(stored.envelope, pin);
       const redeemed = await deliveryCall<{ credential: unknown }>(
         "/issuer/age/claims/redeem",
         claimToken,
       );
       const credential = ageCredentialFileSchema.parse(redeemed.credential);
       await validateAgeCredential(credential);
-      await ageCredentialStore.save(await encryptCredential(credential, pin));
+      await encryptAndSaveCredential(credential, passphrase);
       setStored({ state: "valid", credential });
+      unlockedPassphrase.current = passphrase;
       setClaimSaved(true);
       await deliveryCall("/issuer/age/claims/ack", claimToken);
       window.history.replaceState(null, "", window.location.pathname);
@@ -266,6 +328,7 @@ export default function App() {
       setClaimComplete(true);
       setPin("");
       setPinConfirm("");
+      setReplaceConfirmed(false);
       setMessage("Credential đã được Issuer chuyển, xác minh và mã hóa trong Ví.");
     } catch (reason) {
       setError((reason as Error).message);
@@ -276,22 +339,30 @@ export default function App() {
 
   async function unlockWallet() {
     if (stored.state !== "locked") return;
+    if (pin.length < 8 || pin.length > 64) {
+      const message = "Mã khóa Ví phải có từ 8 đến 64 ký tự.";
+      return checkoutUnlockOpen ? setUnlockError(message) : setError(message);
+    }
     setError("");
+    setUnlockError("");
     try {
       const credential = await decryptCredential(stored.envelope, pin);
       const parsed = ageCredentialFileSchema.parse(credential);
       await validateAgeCredential(parsed);
+      unlockedPassphrase.current = pin;
       setStored({ state: "valid", credential: parsed });
       setPin("");
       setMessage("Ví đã được mở khóa trên thiết bị này.");
     } catch (reason) {
-      setError((reason as Error).message);
+      const message = (reason as Error).message;
+      checkoutUnlockOpen ? setUnlockError(message) : setError(message);
     }
   }
 
   async function lockWallet(automatic = false) {
     const envelope = await ageCredentialStore.get();
     if (envelope) setStored({ state: "locked", envelope });
+    unlockedPassphrase.current = "";
     setPin("");
     setMessage(automatic ? "Ví đã tự khóa sau thời gian không hoạt động." : "Ví đã khóa.");
   }
@@ -300,6 +371,7 @@ export default function App() {
     await ageCredentialStore.remove();
     setStored({ state: "empty" });
     setCandidate(null);
+    unlockedPassphrase.current = "";
     setDeleteOpen(false);
     setMessage("Đã xóa thông tin xác minh khỏi thiết bị.");
   }
@@ -328,7 +400,6 @@ export default function App() {
     setMessage("");
     setProving(true);
     setProvingStatus("Đang kiểm tra thông tin xác minh đã lưu…");
-    markRequestProcessed(request.requestId);
     const consentedAtEpochMs = Date.now();
     try {
       await validateAgeCredential(stored.credential);
@@ -364,6 +435,7 @@ export default function App() {
           consentedAtEpochMs,
         });
       });
+      markRequestProcessed(request.requestId);
       respond({
         type: AGE_WALLET_RESPONSE_TYPE,
         protocolVersion: AGE_WALLET_PROTOCOL_VERSION,
@@ -381,19 +453,7 @@ export default function App() {
       setRequest(null);
       setRequestFinished("success");
     } catch (reason) {
-      const text = (reason as Error).message;
-      respond({
-        type: AGE_WALLET_RESPONSE_TYPE,
-        protocolVersion: AGE_WALLET_PROTOCOL_VERSION,
-        status: "ERROR",
-        requestId: request.requestId,
-        challengeId: request.challengeId,
-        code: "PROOF_FAILED",
-        message: "Không thể tạo bằng chứng trên thiết bị.",
-      });
-      pendingRequestId.current = null;
-      setRequest(null);
-      setError(text);
+      setError(`${(reason as Error).message} Bạn có thể thử lại khi yêu cầu còn hiệu lực.`);
     } finally {
       setProving(false);
       setProvingStatus("");
@@ -433,12 +493,12 @@ export default function App() {
         </div>
         <span className={"security-badge " + (stored.state === "valid" ? "unlocked" : "locked")}>
           {stored.state === "valid" ? <UnlockKeyhole size={14} /> : <LockKeyhole size={14} />}
-          {stored.state === "valid" ? "Ví đã mở" : "Ví đang khóa"}
+          {stored.state === "valid" ? "Ví đã mở" : stored.state === "empty" ? "Ví chưa có thông tin" : stored.state === "invalid" ? "Cần kiểm tra thông tin" : "Ví đang khóa"}
         </span>
       </header>
 
       {request ? (
-        <section className="card request-card">
+        <section className="card request-card" aria-hidden={checkoutUnlockOpen || undefined}>
           <span className="eyebrow">YÊU CẦU TỪ WEBSITE</span>
           <h1>Chứng minh bạn đáp ứng điều kiện từ {request.minimumAge} tuổi</h1>
           <p className="lead"><strong>{request.requesterName}</strong> đang yêu cầu xác minh. Website chỉ nhận kết quả đủ hoặc không đủ tuổi cùng dữ liệu công khai cần thiết; ngày sinh không được gửi đi.</p>
@@ -461,26 +521,27 @@ export default function App() {
             <p>Website yêu cầu: {request.requesterOrigin}</p>
             <p>Mã yêu cầu: {request.requestId}</p>
           </details>
-          {stored.state !== "valid" && (
+          {stored.state === "locked" && (
             <p className="warning">
-              Ví chưa có thông tin xác minh tuổi hợp lệ. Hãy thêm thông tin
-              ngay bên dưới rồi quay lại yêu cầu này.
+              Ví đang khóa. Vui lòng nhập mã khóa để tiếp tục.
             </p>
           )}
+          {stored.state === "empty" && <p className="warning">Ví chưa có thông tin xác minh tuổi.</p>}
+          {stored.state === "invalid" && <p className="warning">{stored.message.toLowerCase().includes("thu hồi") ? "Thông tin xác minh tuổi không còn hiệu lực." : "Thông tin xác minh tuổi đã hết hạn."}</p>}
           <div className="consent-box">
             <ShieldCheck size={20} />
             <div><strong>Phạm vi dữ liệu được chia sẻ</strong><p>Kết quả điều kiện tuổi, commitment, nullifier và dữ liệu công khai của proof. Không gồm ngày sinh hoặc dữ liệu bí mật.</p></div>
           </div>
           <div className="actions">
-            <button
+            <BusyButton
               className="primary"
+              busy={proving}
+              busyLabel="Đang xác minh trên thiết bị…"
               disabled={proving || stored.state !== "valid"}
               onClick={consentAndProve}
             >
-              {proving
-                ? "Đang xác minh trên thiết bị…"
-                : "Đồng ý và tạo bằng chứng"}
-            </button>
+              Đồng ý và tạo bằng chứng
+            </BusyButton>
             <button disabled={proving} onClick={rejectRequest}>
               Từ chối
             </button>
@@ -537,7 +598,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {claimToken && (stored.state !== "valid" || claimSaved) && (
+        {claimToken && !claimComplete && (
           <div className="candidate">
             <span className="badge info"><ShieldCheck size={14} /> TỪ CREDENTIAL ISSUER</span>
             <h3>{claimSaved ? "Credential đã lưu, chờ xác nhận" : "Credential AGE sẵn sàng để nhận"}</h3>
@@ -545,30 +606,27 @@ export default function App() {
               ? "Credential đã được mã hóa trong Ví nhưng chưa gửi được xác nhận. Hãy thử xác nhận lại."
               : "Liên kết nhận dùng một lần và có hiệu lực 5 phút. Credential chỉ được tải sau khi bạn mở khóa Ví."}</p>
             <dl className="receive-summary"><div><dt>Đơn vị phát hành</dt><dd>Credential Issuer được Ví tin cậy</dd></div><div><dt>Loại</dt><dd>AGE · Xác minh thuộc tính tuổi</dd></div><div><dt>Tài khoản nhận</dt><dd>Tài khoản đã mở liên kết tại Issuer</dd></div><div><dt>Thời hạn</dt><dd>Được kiểm tra trước khi lưu</dd></div></dl>
-            {!claimSaved && <label>PIN hoặc passphrase<span className="password-field"><input aria-label="PIN Ví để nhận credential" type={showPin ? "text" : "password"} autoComplete="current-password" placeholder="8–64 ký tự" value={pin} onChange={(event) => setPin(event.target.value)} /><button type="button" className="icon-button" aria-label={showPin ? "Ẩn PIN" : "Hiện PIN"} onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span></label>}
-            {!claimSaved && stored.state === "empty" && (
-              <label>Nhập lại PIN<input aria-label="Nhập lại PIN Ví khi nhận credential" type={showPin ? "text" : "password"} autoComplete="new-password" placeholder="Nhập lại PIN" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value)} /></label>
-            )}
-            {!claimSaved && <p className="pin-warning">Hãy ghi nhớ PIN. Ví không lưu PIN và không thể khôi phục nếu bạn quên.</p>}
-            <button className="primary" disabled={claiming} onClick={claimCredential}>
-              {claiming ? "Đang lưu an toàn…" : claimSaved ? "Gửi lại xác nhận đã lưu" : "Lưu vào Ví"}
-            </button>
+            {!claimSaved && stored.state === "empty" && <fieldset className="key-setup"><legend>Tạo mã khóa Ví</legend><label>Mã khóa<span className="password-field"><input aria-label="Tạo mã khóa Ví" type={showPin ? "text" : "password"} autoComplete="new-password" placeholder="8–64 ký tự" value={pin} onChange={(event) => setPin(event.target.value)} /><button type="button" className="icon-button" aria-label={showPin ? "Ẩn mã khóa" : "Hiện mã khóa"} onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span></label><label>Xác nhận mã khóa<input aria-label="Xác nhận mã khóa Ví" type={showPin ? "text" : "password"} autoComplete="new-password" placeholder="Nhập lại mã khóa" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value)} /></label><p className="pin-warning">Hãy ghi nhớ mã khóa. Ví không lưu mã khóa và không thể khôi phục nếu bạn quên.</p></fieldset>}
+            {!claimSaved && stored.state === "locked" && <p className="pin-warning">Ví đang khóa. Hãy mở khóa bên dưới trước khi lưu credential.</p>}
+            {!claimSaved && stored.state === "valid" && <label className="replace-confirm"><input type="checkbox" checked={replaceConfirmed} onChange={event=>setReplaceConfirmed(event.target.checked)}/>Tôi hiểu credential mới sẽ thay thế credential AGE hiện có sau khi được kiểm tra và lưu an toàn.</label>}
+            {(claimSaved || stored.state !== "locked") && <BusyButton className="primary" busy={claiming} busyLabel="Đang lưu an toàn…" disabled={claiming || (stored.state === "valid" && !claimSaved && !replaceConfirmed)} onClick={claimCredential}>
+              {claimSaved ? "Gửi lại xác nhận đã lưu" : "Lưu vào Ví"}
+            </BusyButton>}
           </div>
         )}
-        {stored.state === "locked" && (
+        {stored.state === "locked" && !request && (
           <div className="unlock-panel">
             <div className="unlock-copy"><div className="empty-icon"><LockKeyhole size={24}/></div><div><h3>Mở khóa credential</h3><p>Credential chỉ được giải mã trong bộ nhớ của phiên này.</p></div></div>
-            <label>PIN Ví<span className="password-field"><input
-              aria-label="PIN Ví"
-              inputMode="numeric"
+            <label>Mã khóa Ví<span className="password-field"><input
+              aria-label="Mã khóa Ví"
               type={showPin ? "text" : "password"}
               autoComplete="current-password"
-              placeholder="PIN 6–12 chữ số"
+              placeholder="8–64 ký tự"
               value={pin}
               onChange={(event) => setPin(event.target.value)}
-            /><button type="button" className="icon-button" aria-label={showPin ? "Ẩn PIN" : "Hiện PIN"} onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span></label>
+            /><button type="button" className="icon-button" aria-label={showPin ? "Ẩn mã khóa" : "Hiện mã khóa"} onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span></label>
             <div className="actions">
-              <button className="primary" onClick={unlockWallet}>
+              <button className="primary" disabled={pin.length < 8 || pin.length > 64} onClick={unlockWallet}>
                 <UnlockKeyhole size={16} /> Mở khóa
               </button>
               <button className="danger" onClick={() => setDeleteOpen(true)}>
@@ -640,22 +698,22 @@ export default function App() {
           </div>
         )}
         <p className="fineprint">
-          Credential được mã hóa bằng PIN trước khi lưu và Ví tự khóa sau 5 phút
+          Credential được mã hóa bằng mã khóa trước khi lưu và Ví tự khóa sau 5 phút
           không hoạt động. Cơ chế này không chống được malware khi Ví đang mở.
           Kết quả xác minh không thay thế giấy tờ pháp lý.
         </p>
         <details className="technical-details">
           <summary>Thông tin lưu trữ và bảo mật</summary>
           <p>
-            IndexedDB chỉ lưu bản mã AES-GCM. Khóa được dẫn xuất từ PIN bằng
-            PBKDF2-SHA-256 với salt ngẫu nhiên; PIN và khóa thô không được lưu.
+            IndexedDB chỉ lưu bản mã AES-GCM. Khóa được dẫn xuất từ mã khóa Ví bằng
+            PBKDF2-SHA-256 với salt ngẫu nhiên; mã khóa và khóa thô không được lưu.
             Website bán hàng không thể đọc credential.
           </p>
         </details>
       </section>
 
       <section className="privacy-grid" aria-label="Cam kết riêng tư của Ví">
-        <article><LockKeyhole size={20} /><strong>Khóa cục bộ</strong><span>PIN và khóa giải mã không rời thiết bị.</span></article>
+        <article><LockKeyhole size={20} /><strong>Khóa cục bộ</strong><span>Mã khóa và khóa giải mã không rời thiết bị.</span></article>
         <article><ShieldCheck size={20} /><strong>Tiết lộ tối thiểu</strong><span>Website chỉ nhận kết quả và dữ liệu proof công khai.</span></article>
         <article><Sparkles size={20} /><strong>Bạn chủ động</strong><span>Mọi yêu cầu đều cần sự đồng ý rõ ràng.</span></article>
       </section>
@@ -675,20 +733,20 @@ export default function App() {
             Ví không hiển thị ngày sinh hoặc dữ liệu bí mật trong tệp.
           </p>
           <input
-            aria-label="Tạo PIN Ví"
+            aria-label="Tạo mã khóa Ví"
             inputMode="numeric"
             type={showPin ? "text" : "password"}
             autoComplete="new-password"
-            placeholder="PIN/passphrase 8–64 ký tự"
+            placeholder="Mã khóa 8–64 ký tự"
             value={pin}
             onChange={(event) => setPin(event.target.value)}
           />
           <input
-            aria-label="Nhập lại PIN Ví"
+            aria-label="Xác nhận mã khóa Ví"
             inputMode="numeric"
             type={showPin ? "text" : "password"}
             autoComplete="new-password"
-            placeholder="Nhập lại PIN"
+            placeholder="Nhập lại mã khóa"
             value={pinConfirm}
             onChange={(event) => setPinConfirm(event.target.value)}
           />
@@ -697,7 +755,7 @@ export default function App() {
               Lưu trên thiết bị
             </button>
             <button onClick={() => setCandidate(null)}>Hủy</button>
-            <button type="button" className="text-button" onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={16}/> : <Eye size={16}/>} {showPin ? "Ẩn PIN" : "Hiện PIN"}</button>
+            <button type="button" className="text-button" onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={16}/> : <Eye size={16}/>} {showPin ? "Ẩn mã khóa" : "Hiện mã khóa"}</button>
           </div>
         </section>
       )}
@@ -748,6 +806,21 @@ export default function App() {
         <p className="error message" role="alert">
           {error}
         </p>
+      )}
+      {checkoutUnlockOpen && (
+        <div className="modal-backdrop unlock-modal-backdrop" role="presentation">
+          <section ref={unlockDialog} className="modal unlock-modal" role="dialog" aria-modal="true" aria-labelledby="unlock-title" aria-describedby="unlock-description">
+            <div className="modal-icon"><LockKeyhole size={22}/></div>
+            <h2 id="unlock-title">Mở khóa Ví để tiếp tục</h2>
+            <p id="unlock-description">Thông tin xác minh đang được mã hóa trên thiết bị này</p>
+            <label>Mã khóa Ví<span className="password-field"><input ref={unlockInput} aria-label="Mã khóa Ví" type={showPin ? "text" : "password"} autoComplete="current-password" minLength={8} maxLength={64} placeholder="8–64 ký tự" value={pin} onChange={(event) => { setPin(event.target.value); setUnlockError(""); }}/><button type="button" className="icon-button" aria-label={showPin ? "Ẩn mã khóa" : "Hiện mã khóa"} onClick={() => setShowPin(!showPin)}>{showPin ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span></label>
+            {unlockError && <p className="error" role="alert">{unlockError}</p>}
+            <div className="actions unlock-actions">
+              <button className="primary" disabled={pin.length < 8 || pin.length > 64} onClick={unlockWallet}><UnlockKeyhole size={16}/> Mở khóa và tiếp tục</button>
+              <button onClick={rejectRequest}>Hủy xác minh</button>
+            </div>
+          </section>
+        </div>
       )}
       {deleteOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteOpen(false)}>

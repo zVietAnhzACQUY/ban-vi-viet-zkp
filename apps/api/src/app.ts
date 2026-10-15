@@ -326,6 +326,11 @@ export async function createApp(
       return signIn(user, req, reply);
     },
   );
+  // Prepared once per API instance; unknown accounts still incur Argon2 verification.
+  // Reuse for both login audiences without logging credentials or lookup results.
+  const dummyPasswordHash = await argon2.hash(randomBytes(32).toString("hex"), {
+    type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1,
+  });
   app.post(
     "/api/auth/login",
     { config: { rateLimit: { max: 15, timeWindow: "1 minute" } } },
@@ -343,7 +348,8 @@ export async function createApp(
         .strict()
         .parse(req.body);
       const u = await db.user.findUnique({ where: { email: b.email } });
-      if (!u || !(await argon2.verify(u.passwordHash, b.password)))
+      const valid = await argon2.verify(u?.passwordHash || dummyPasswordHash, b.password).catch(() => false);
+      if (!u || !valid)
         fail("INVALID_LOGIN", "Thông tin đăng nhập không hợp lệ hoặc tài khoản không được phép truy cập.", 401);
       if (u.role === "ISSUER_OPERATOR")
         fail("INVALID_LOGIN", "Thông tin đăng nhập không hợp lệ hoặc tài khoản không được phép truy cập.", 401);
@@ -365,7 +371,6 @@ export async function createApp(
     const value=req.cookies.issuer_csrf && /^[0-9a-f]{64}$/.test(req.cookies.issuer_csrf)?req.cookies.issuer_csrf:randomBytes(32).toString("hex");
     reply.setCookie("issuer_csrf",value,{path:"/",httpOnly:true,sameSite:"strict",secure,maxAge:86400});return {token:value};
   });
-  const dummyPasswordHash=await argon2.hash(randomBytes(32).toString("hex"),{type:argon2.argon2id,memoryCost:19456,timeCost:2,parallelism:1});
   app.post("/api/issuer/auth/login",{config:{rateLimit:{max:15,timeWindow:"1 minute"}}},async(req,reply)=>{
     const input=z.object({email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),password:z.string().min(1).max(128)}).strict().safeParse(req.body);
     const user=input.success?await db.user.findUnique({where:{email:input.data.email}}):null;
@@ -512,7 +517,7 @@ export async function createApp(
   app.get("/api/me/addresses", async (req) =>
     db.address.findMany({
       where: { userId: actor(req).id },
-      orderBy: { name: "asc" },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
     }),
   );
   app.post("/api/me/addresses", async (req) =>
@@ -552,17 +557,35 @@ export async function createApp(
         actor(req).id,
         ageProofBundleSchema.parse(req.body),
       );
+      const binding = await db.ageChallenge.findUniqueOrThrow({
+        where: { id: verification.challengeId },
+        select: { requestHash: true, cartSnapshotHash: true },
+      });
       return {
         status: "VERIFIED" as const,
         verificationId: verification.id,
         challengeId: verification.challengeId,
-        nullifier: verification.nullifier,
         verifiedAt: verification.verifiedAt,
         expiresAt: verification.expiresAt,
+        requestHash: binding.requestHash,
+        cartSnapshotHash: binding.cartSnapshotHash,
         serverVerificationMs: performance.now() - startedAt,
       };
     },
   );
+  app.get("/api/age/verifications/current", async (req) => {
+    const verification = await age.recoverForCheckout(actor(req).id);
+    if (!verification) return null;
+    return {
+      status: "VERIFIED" as const,
+      verificationId: verification.id,
+      challengeId: verification.challengeId,
+      verifiedAt: verification.verifiedAt,
+      expiresAt: verification.expiresAt,
+      requestHash: verification.challenge.requestHash,
+      cartSnapshotHash: verification.challenge.cartSnapshotHash,
+    };
+  });
   app.post("/api/orders", async (req) => {
     const user = actor(req);
     const body = z
@@ -637,42 +660,67 @@ export async function createApp(
         ? "EXPIRED"
         : request.status,
   });
-  const minimalAgeRequest = (request: any) => {
+  const customerAgeRequestSelect = {
+    id: true,
+    userId: true,
+    status: true,
+    createdAt: true,
+    expiresAt: true,
+    credentialId: true,
+    recordSubmittedAt: true,
+  } satisfies Prisma.AgeCredentialRequestSelect;
+  const minimalAgeRequest = async (request: any) => {
     const effective = effectiveAgeRequest(request);
+    const received = request.credentialId
+      ? await db.ageCredentialClaim.findFirst({
+          where: {
+            requestId: request.id,
+            userId: request.userId,
+            credentialId: request.credentialId,
+            credentialType: "AGE",
+            status: "CLAIMED",
+            claimedAt: { not: null },
+          },
+          select: { claimedAt: true },
+          orderBy: { claimedAt: "desc" },
+        })
+      : null;
     return {
       id: effective.id,
       status: effective.status,
       createdAt: effective.createdAt,
       recordSubmitted: Boolean(effective.recordSubmittedAt),
+      walletReceived: Boolean(received?.claimedAt),
+      walletReceivedAt: received?.claimedAt ?? null,
     };
   };
   app.get("/api/me/age-credential-status", async (req) => {
     const user = actor(req);
     const request = await db.ageCredentialRequest.findFirst({
       where: { userId: user.id },
-      select: { id: true, status: true, createdAt: true, expiresAt: true, recordSubmittedAt: true },
+      select: customerAgeRequestSelect,
       orderBy: { createdAt: "desc" },
     });
     if (!request) return null;
-    return minimalAgeRequest(request);
+    return await minimalAgeRequest(request);
   });
   app.get("/api/me/age-credential-requests", async (req) => {
     const user = actor(req);
-    return (await db.ageCredentialRequest.findMany({
+    return await Promise.all((await db.ageCredentialRequest.findMany({
       where: { userId: user.id },
-      select: { id: true, status: true, createdAt: true, expiresAt: true, recordSubmittedAt: true },
+      select: customerAgeRequestSelect,
       orderBy: { createdAt: "desc" },
       take: 20,
-    })).map(minimalAgeRequest);
+    })).map(minimalAgeRequest));
   });
   app.get("/api/me/age-credential-requests/:id", async (req) => {
     const user = actor(req);
     const request = await db.ageCredentialRequest.findFirst({
       where: { id: id(req), userId: user.id },
-      select: { id: true, status: true, createdAt: true, expiresAt: true, recordSubmittedAt: true },
+      select: customerAgeRequestSelect,
     });
     if (!request) fail("REQUEST_NOT_FOUND", "Không tìm thấy yêu cầu của tài khoản này.", 404);
-    return minimalAgeRequest(request);
+    return await minimalAgeRequest(request);
   });
   app.post("/api/me/age-credential-requests", async (req) => {
     const user = actor(req);
@@ -682,19 +730,21 @@ export async function createApp(
         where: { userId: user.id, status: { in: ["PENDING", "APPROVED", "ISSUING"] } },
         orderBy: { createdAt: "desc" },
       });
-      if (open) return minimalAgeRequest(open);
+      if (open) return await minimalAgeRequest(open);
       const active = await tx.ageCredentialRequest.findFirst({
         where: { userId: user.id, status: "ISSUED", expiresAt: { gt: new Date() } },
       });
       if (active)
         fail("AGE_CREDENTIAL_STILL_ACTIVE", "Credential hiện tại vẫn còn hiệu lực. Hãy thu hồi hoặc chờ hết hạn trước khi yêu cầu cấp lại.");
-      return minimalAgeRequest(await tx.ageCredentialRequest.create({ data: { userId: user.id } }));
+      return await minimalAgeRequest(await tx.ageCredentialRequest.create({ data: { userId: user.id } }));
     });
   });
   app.get("/api/admin/age-credential-requests", async (req) => {
     issuerOperator(req);
     return (await db.ageCredentialRequest.findMany({
-      include: {
+      select: {
+        id: true, status: true, createdAt: true, reviewedAt: true, issuedAt: true,
+        expiresAt: true, revokedAt: true, revocationReason: true, circuitVersion: true,
         user: { select: { id: true, name: true, email: true } },
         operator: { select: { id: true, name: true } },
       },
@@ -752,7 +802,17 @@ export async function createApp(
       await tx.auditLog.create({
         data: { actorId: operator.id, action: `AGE_REQUEST_${body.action}`, objectId: requestId },
       });
-      return updated;
+      return {
+        id: updated.id,
+        status: updated.status,
+        createdAt: updated.createdAt,
+        reviewedAt: updated.reviewedAt,
+        issuedAt: updated.issuedAt,
+        expiresAt: updated.expiresAt,
+        revokedAt: updated.revokedAt,
+        revocationReason: updated.revocationReason,
+        circuitVersion: updated.circuitVersion,
+      };
     });
   });
   app.get("/api/admin/products", async (req) => {

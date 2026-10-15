@@ -1,0 +1,63 @@
+/* Shared, opt-in motion policy. Each application retains its own colours. */
+:root {
+  --interaction-duration: 180ms;
+  --interaction-shadow: 0 4px 12px rgb(15 23 42 / 12%);
+}
+body :is(button, a.button, a.file-button, a.table-link, .category-tile) {
+  transition: transform var(--interaction-duration) ease,
+    box-shadow var(--interaction-duration) ease,
+    background-color var(--interaction-duration) ease,
+    border-color var(--interaction-duration) ease,
+    opacity var(--interaction-duration) ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  body :is(button, a.button, a.file-button, a.table-link, .category-tile):hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):not(.disabled) {
+    transform: translateY(-1px);
+    box-shadow: var(--interaction-shadow);
+    background-image: linear-gradient(rgb(127 127 127 / 7%), rgb(127 127 127 / 7%));
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  body :is(button, a.button, a.file-button, a.table-link, .category-tile):hover {
+    transform: none;
+    box-shadow: none;
+    filter: none;
+    background-image: none;
+  }
+}
+body :is(button, a.button, a.file-button, a.table-link, .category-tile):active:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):not(.disabled) {
+  transform: translateY(0) scale(.98);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 10%);
+}
+body :is(button, a, input, select, textarea, summary):focus-visible {
+  outline: 3px solid var(--interaction-focus, #3f7358);
+  outline-offset: 3px;
+}
+body :is(button:disabled, [aria-disabled="true"], a.disabled) {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+  background-image: none;
+  opacity: .55;
+  cursor: not-allowed;
+}
+body button[aria-busy="true"] { cursor: progress; }
+.stable-busy-button { position: relative; }
+.stable-busy-content { display: inline-flex; align-items: center; justify-content: center; gap: inherit; }
+.stable-busy-button[aria-busy="true"] .stable-busy-content { opacity: 0; }
+.stable-busy-spinner {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  pointer-events: none;
+}
+.stable-busy-spinner::after {
+  content: ""; width: 18px; height: 18px; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%;
+  animation: interaction-spin .8s linear infinite;
+}
+@keyframes interaction-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  body :is(button, a, input, select, textarea, summary, .category-tile, .product-card, .product-art) {
+    transition: none !important; transform: none !important;
+  }
+  .stable-busy-spinner::after { animation: none; }
+}

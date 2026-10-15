@@ -3,6 +3,7 @@ import type { PrismaClient } from "../api/generated/client/index.js";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
+const PREVIEW_MIME = new Set(["application/pdf", "image/jpeg", "image/png"]);
 import { fail } from "../api/src/commerce.js";
 import { inspectEvidence, saveEvidence, openEvidence, removeEvidence, MAX_EVIDENCE_BYTES, type EvidenceStorage } from "./evidence-storage.js";
 
@@ -65,7 +66,7 @@ export async function registerLotRequests(app:FastifyInstance,db:PrismaClient,st
     const data=await db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT id FROM "LotCredentialRequest" WHERE id=${requestId}::uuid FOR UPDATE`;
       const r=await tx.lotCredentialRequest.findUnique({where:{id:requestId}});if(!r)fail("NOT_FOUND","Không tìm thấy yêu cầu.",404);if(r.userId===u.id)fail("SELF_REVIEW","Không được review yêu cầu của chính mình.",403);
-      const e=await tx.lotVerificationEvidence.findFirst({where:{requestId,deletedAt:null,ownerUserId:r.userId}});if(!e)fail("NOT_FOUND","Không có hồ sơ đang hoạt động.",404);
+      const e=await tx.lotVerificationEvidence.findFirst({where:{requestId,deletedAt:null,ownerUserId:r.userId}});if(!e)fail("NOT_FOUND","Không có hồ sơ đang hoạt động.",404);if(!PREVIEW_MIME.has(e.detectedMimeType))fail("INVALID_FILE","Định dạng hồ sơ không được phép xem.",415);
       return {bytes:await verifiedLotEvidence(storage,e),mime:e.detectedMimeType};
     });return reply.header("Cache-Control","no-store").header("Content-Disposition",'attachment; filename="lot-record"').type(data.mime).send(Readable.from([data.bytes]));
   });

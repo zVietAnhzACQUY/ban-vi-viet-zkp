@@ -3,3 +3,9 @@ export function cartRequiresAgeProof(
 ) {
   return items.some((item) => item.product.requiresAgeProof);
 }
+
+export function tryBeginAgeVerification(guard: { current: boolean }) {
+  if (guard.current) return false;
+  guard.current = true;
+  return true;
+}

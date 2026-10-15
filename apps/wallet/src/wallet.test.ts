@@ -26,13 +26,14 @@ import {
 } from "./credential";
 import { validateIncomingProofRequest } from "./protocol";
 import { verifyArtifactHash } from "./proof";
-import { decryptCredential, encryptCredential } from "./storage";
+import { decryptCredential, encryptCredential, encryptAndSaveCredential } from "./storage";
 import {
   shouldLockWalletOnVisibility,
   WALLET_AUTO_LOCK_MS,
 } from "./lock-policy";
 import {
   WalletRequestGuard,
+  WalletResponseError,
   waitForWalletProof,
   type WalletTransportRuntime,
 } from "../../web/src/wallet";
@@ -234,7 +235,7 @@ await test("Wallet credential validation and local save", async (t) => {
   });
 });
 
-await test("Wallet encrypts credential with PIN and rejects tampering", async (t) => {
+await test("Wallet encrypts credential with an 8–64 character key and replaces atomically", async (t) => {
   const issuedAtSeconds = Math.floor(Date.now() / 1000) - 10;
   const credential = await issueAgeCredential({
     userId: randomUUID(),
@@ -253,12 +254,25 @@ await test("Wallet encrypts credential with PIN and rejects tampering", async (t
     credential,
   );
   await assert.rejects(() => encryptCredential(credential, "1234567"), /8–64/);
-  await t.test("wrong PIN is rejected", async () => {
-    await assert.rejects(() => decryptCredential(envelope, "87654321"), /PIN không đúng/);
+  await t.test("wrong key is rejected", async () => {
+    await assert.rejects(() => decryptCredential(envelope, "87654321"), /Mã khóa không đúng/);
   });
   await t.test("tampered ciphertext is rejected", async () => {
     const tampered = { ...envelope, ciphertext: envelope.ciphertext.slice(0, -2) + "AA" };
     await assert.rejects(() => decryptCredential(tampered, "12345678"), /đã bị thay đổi/);
+  });
+  await t.test("successful replacement stores the new encrypted credential", async () => {
+    let stored = envelope;
+    const replacement = structuredClone(credential);
+    replacement.metadata.credentialId = randomUUID();
+    await encryptAndSaveCredential(replacement, "replacement-key", async next => void (stored = next));
+    assert.deepEqual(await decryptCredential(stored, "replacement-key"), replacement);
+  });
+  await t.test("failed replacement leaves the previous encrypted credential intact", async () => {
+    const stored = structuredClone(envelope);
+    await assert.rejects(() => encryptAndSaveCredential(credential, "replacement-key", async () => { throw new Error("fixture storage failure"); }), /fixture storage failure/);
+    assert.deepEqual(stored, envelope);
+    assert.deepEqual(await decryptCredential(stored, "12345678"), credential);
   });
 });
 
@@ -383,9 +397,9 @@ await test("Website message guard rejects spoofing and exits cleanly", async (t)
       );
       assert.match(
         new WalletRequestGuard(request, popup, "http://127.0.0.1:5174").abort(
-          "timeout",
+          "proof-timeout",
         ).message,
-        /hết thời gian/,
+        /kết quả xác minh/,
       );
     },
   );
@@ -443,6 +457,16 @@ await test("Website transport always removes its listener and timers", async (t)
     harness.assertClean();
   });
 
+  await t.test("missing credential preserves the existing protocol error code", async () => {
+    const request = proofRequest();
+    const popup = { closed: false, postMessage() {} } as unknown as Window;
+    const harness = transportHarness(Date.now());
+    const pending = waitForWalletProof(request, popup, "http://127.0.0.1:5174", harness.runtime);
+    harness.emit({ type: AGE_WALLET_RESPONSE_TYPE, protocolVersion: AGE_WALLET_PROTOCOL_VERSION, status: "ERROR", requestId: request.requestId, challengeId: request.challengeId, code: "NO_CREDENTIAL", message: "Bạn chưa có thông tin xác minh tuổi trong Ví." }, popup);
+    await assert.rejects(pending, (reason: unknown) => reason instanceof WalletResponseError && reason.code === "NO_CREDENTIAL");
+    harness.assertClean();
+  });
+
   await t.test("popup close", async () => {
     const request = proofRequest();
     const popup = { closed: false, postMessage() {} } as unknown as Window;
@@ -459,7 +483,7 @@ await test("Website transport always removes its listener and timers", async (t)
     harness.assertClean();
   });
 
-  await t.test("request timeout", async () => {
+  await t.test("Wallet READY timeout", async () => {
     const request = proofRequest();
     const popup = { closed: false, postMessage() {} } as unknown as Window;
     const harness = transportHarness(Date.now());
@@ -470,7 +494,46 @@ await test("Website transport always removes its listener and timers", async (t)
       harness.runtime,
     );
     harness.fireTimeout();
-    await assert.rejects(pending, /hết thời gian/);
+    await assert.rejects(pending, /phản hồi khởi tạo/);
+    harness.assertClean();
+  });
+
+  await t.test("proof timeout after Wallet READY", async () => {
+    const request = proofRequest();
+    const popup = { closed: false, postMessage() {} } as unknown as Window;
+    const harness = transportHarness(Date.now());
+    const pending = waitForWalletProof(
+      request,
+      popup,
+      "http://127.0.0.1:5174",
+      harness.runtime,
+    );
+    harness.emit(
+      {
+        type: AGE_WALLET_READY_TYPE,
+        protocolVersion: AGE_WALLET_PROTOCOL_VERSION,
+      },
+      popup,
+    );
+    harness.fireTimeout();
+    await assert.rejects(pending, /kết quả xác minh/);
+    harness.assertClean();
+  });
+
+  await t.test("checkout unmount aborts and removes listener and timers", async () => {
+    const request = proofRequest();
+    const popup = { closed: false, postMessage() {} } as unknown as Window;
+    const harness = transportHarness(Date.now());
+    const controller = new AbortController();
+    const pending = waitForWalletProof(
+      request,
+      popup,
+      "http://127.0.0.1:5174",
+      harness.runtime,
+      controller.signal,
+    );
+    controller.abort();
+    await assert.rejects(pending, /đã được hủy/);
     harness.assertClean();
   });
 });
@@ -556,10 +619,51 @@ test("Wallet UI explains disclosure and uses an in-app destructive confirmation"
   assert.doesNotMatch(app, /window\.confirm/);
 });
 
+test("Wallet only remembers a proof request after a terminal outcome", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const proofFlow = app.slice(app.indexOf("async function consentAndProve"), app.indexOf("const current ="));
+  const tryBlock = proofFlow.slice(proofFlow.indexOf("try {"), proofFlow.indexOf("} catch"));
+  const catchBlock = proofFlow.slice(proofFlow.indexOf("} catch"));
+  assert.match(tryBlock, /markRequestProcessed\(request\.requestId\);[\s\S]*respond\(/);
+  assert.doesNotMatch(catchBlock, /markRequestProcessed|respond\(/);
+  assert.match(catchBlock, /có thể thử lại khi yêu cầu còn hiệu lực/);
+});
+
 test("Wallet UI only offers fixed Website return links after terminal flows", () => {
   const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   assert.match(app, /new URL\("\/tai-khoan", allowedWebsite\)/);
   assert.match(app, /claimComplete &&/);
   assert.match(app, /requestFinished &&/);
   assert.doesNotMatch(app, /returnUrl/);
+});
+
+test("AGE claim UI has one mutually exclusive key flow for each Wallet state", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(app, /stored\.state === "empty" && <fieldset className="key-setup">/);
+  assert.match(app, /<legend>Tạo mã khóa Ví<\/legend>/);
+  assert.match(app, /stored\.state === "locked" && <p className="pin-warning">Ví đang khóa/);
+  assert.match(app, /stored\.state === "valid" && <label className="replace-confirm">/);
+  assert.match(app, /const passphrase = stored\.state === "empty" \? pin : unlockedPassphrase\.current/);
+  assert.doesNotMatch(app, /6–12|6-12|chữ số/);
+  assert.match(app, /Hai lần nhập mã khóa chưa khớp/);
+  assert.match(app, /Hãy xác nhận thay thế credential/);
+});
+
+test("checkout request locks consent behind one focused unlock modal", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(app, /checkoutUnlockOpen = Boolean\(request && stored\.state === "locked"\)/);
+  assert.match(app, /Mở khóa Ví để tiếp tục/);
+  assert.match(app, /Thông tin xác minh đang được mã hóa trên thiết bị này/);
+  assert.match(app, /ref=\{unlockInput\}/);
+  assert.match(app, /document\.addEventListener\("keydown", trapFocus\)/);
+  assert.match(app, /document\.removeEventListener\("keydown", trapFocus\)/);
+  assert.match(app, /Mở khóa và tiếp tục/);
+  assert.match(app, /Hủy xác minh/);
+  assert.match(app, /stored\.state === "locked" && !request/);
+  assert.match(app, /disabled=\{proving \|\| stored\.state !== "valid"\}/);
+  assert.match(app, /checkoutUnlockOpen \? setUnlockError\(message\) : setError\(message\)/);
+  assert.match(app, /setStored\(\{ state: "valid", credential: parsed \}\)/);
+  assert.match(app, /setRequest\(null\)/);
+  const unlock = app.slice(app.indexOf("async function unlockWallet"), app.indexOf("async function lockWallet"));
+  assert.doesNotMatch(unlock, /consentAndProve|new Worker/);
 });

@@ -45,6 +45,10 @@ test("Website has minimal status flow and no credential claim transport", () => 
     readFileSync(new URL("./api.ts", import.meta.url), "utf8");
   assert.match(website, /\/account\/age-verification\/:id/);
   assert.match(website, /Tiếp tục nhận tại Issuer/);
+  assert.match(website, /walletReceived/);
+  assert.match(website, /Đã nhận vào Ví/);
+  assert.match(website, /window\.addEventListener\("focus", refetch\)/);
+  assert.match(website, /document\.addEventListener\("visibilitychange", refetch\)/);
   assert.equal(website.includes("/issuer/age/claims"), false);
   assert.equal(website.includes("claimUrl"), false);
   for (const field of ["dob", "salt", "holderSecret", "privateKey"])

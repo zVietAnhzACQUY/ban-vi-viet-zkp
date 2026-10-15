@@ -126,37 +126,45 @@ export async function createDeliveryApp(
   app.post("/issuer/age/claims", async (req) => {
     const user = actor(req);
     const { requestId } = z.object({ requestId: uuid }).strict().parse(req.body);
-    const request = await db.ageCredentialRequest.findUnique({ where: { id: requestId } });
-    if (
-      !request ||
-      request.userId !== user.id ||
-      request.status !== "ISSUED" ||
-      !request.credentialId ||
-      request.revokedAt
-    )
-      fail("CREDENTIAL_NOT_DELIVERABLE", "Credential chưa sẵn sàng để nhận.", 409);
-    const delivery = await db.ageCredentialDelivery.findUnique({ where: { requestId } });
-    if (
-      !delivery ||
-      delivery.userId !== user.id ||
-      delivery.credentialId !== request.credentialId
-    )
-      fail("DELIVERY_NOT_FOUND", "Issuer chưa chuẩn bị gói nhận credential.", 409);
     const token = randomBytes(32).toString("base64url");
     const createdAt = now();
-    await db.ageCredentialClaim.create({
-      data: {
-        deliveryId: delivery.id,
-        requestId,
-        userId: user.id,
-        credentialId: request.credentialId,
-        credentialType: "AGE",
-        tokenHash: tokenHash(token),
-        status: "ACTIVE",
-        expiresAt: new Date(createdAt.getTime() + CLAIM_TTL_MS),
-        createdAt,
-      },
-    });
+    await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "AgeCredentialRequest" WHERE id=${requestId}::uuid FOR UPDATE`;
+      const request = await tx.ageCredentialRequest.findUnique({ where: { id: requestId } });
+      if (
+        !request || request.userId !== user.id || request.status !== "ISSUED" ||
+        !request.credentialId || request.revokedAt ||
+        (request.expiresAt && request.expiresAt <= createdAt)
+      )
+        fail("CREDENTIAL_NOT_DELIVERABLE", "Credential chưa sẵn sàng để nhận.", 409);
+      const delivery = await tx.ageCredentialDelivery.findUnique({ where: { requestId } });
+      if (!delivery || delivery.userId !== user.id || delivery.credentialId !== request.credentialId)
+        fail("DELIVERY_NOT_FOUND", "Issuer chưa chuẩn bị gói nhận credential.", 409);
+      await tx.$queryRaw`SELECT id FROM "AgeCredentialDelivery" WHERE id=${delivery.id}::uuid FOR UPDATE`;
+      if (await tx.ageCredentialClaim.findFirst({ where: {
+        requestId, userId: user.id, credentialId: request.credentialId,
+        credentialType: "AGE", status: "CLAIMED", claimedAt: { not: null },
+      }, select: { id: true } }))
+        fail("CREDENTIAL_ALREADY_CLAIMED", "Credential đã được nhận vào Ví.", 409);
+      if (await tx.ageCredentialClaim.findFirst({ where: {
+        requestId, userId: user.id, credentialId: request.credentialId,
+        credentialType: "AGE", status: "ACTIVE", expiresAt: { gt: createdAt },
+      }, select: { id: true } }))
+        fail("CLAIM_ALREADY_ACTIVE", "Một phiên nhận credential đang còn hiệu lực.", 409);
+      await tx.ageCredentialClaim.create({
+        data: {
+          deliveryId: delivery.id,
+          requestId,
+          userId: user.id,
+          credentialId: request.credentialId,
+          credentialType: "AGE",
+          tokenHash: tokenHash(token),
+          status: "ACTIVE",
+          expiresAt: new Date(createdAt.getTime() + CLAIM_TTL_MS),
+          createdAt,
+        },
+      });
+    }, { maxWait: 10_000, timeout: 10_000 });
     return { claimUrl: `${walletOrigin}/?claim=${encodeURIComponent(token)}`, expiresAt: new Date(createdAt.getTime() + CLAIM_TTL_MS).toISOString() };
   });
 

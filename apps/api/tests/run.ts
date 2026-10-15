@@ -8,6 +8,7 @@ if (!url || schema !== "g2_test_20261007")
 process.env.DATABASE_URL = url;
 process.env.G2_TEST = "1";
 for (const args of [
+  ["--import", "tsx", "--test", "api/tests/login-rate-limit.test.ts"],
   [
     "node_modules/prisma/build/index.js",
     "migrate",
@@ -17,6 +18,7 @@ for (const args of [
   ],
   ["--import", "tsx", "--test", "web/src/search.test.ts"],
   ["--import", "tsx", "--test", "web/src/checkout-policy.test.ts"],
+  ["--import", "tsx", "--test", "web/src/checkout-address.test.ts"],
   ["--import", "tsx", "--test", "web/src/auth-guard.test.ts"],
   ["--import", "tsx", "--test", "web/src/age-request-flow.test.ts"],
   ["--import", "tsx", "--test", "issuer-portal/src/flow.test.ts"],

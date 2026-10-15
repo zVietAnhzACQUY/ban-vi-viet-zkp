@@ -19,10 +19,10 @@ Kiểm tra website `http://127.0.0.1:5173`, Wallet `http://127.0.0.1:5174`, API 
 
 1. Đăng nhập website bằng tài khoản demo và ghi lại UUID tài khoản.
 2. Trên máy giữ private key AGE, phát hành request pilot theo hướng dẫn operator; không chia sẻ private key/credential.
-3. Tại Portal, khi request là `ISSUED`, chọn **Nhận vào Ví**; trong Wallet nhập PIN và nhận trực tiếp. Kiểm URL chỉ có `claim` token. Import tệp chỉ kiểm ở mục **Nâng cao / Khôi phục từ tệp** như đường dự phòng.
+3. Tại Portal, khi request là `ISSUED`, chọn **Nhận vào Ví**. Nếu Ví chưa có credential, tạo mã khóa Ví 8–64 ký tự và nhập lại để xác nhận; nếu Ví đang khóa, chỉ nhập một lần mã khóa hiện có. Kiểm URL chỉ có `claim` token. Import tệp chỉ kiểm ở mục **Nâng cao / Khôi phục từ tệp** như đường dự phòng.
 4. Xác nhận Wallet chỉ hiện loại, Issuer, thời hạn; không hiện DOB/dobDay/salt/holderSecret.
-5. Chọn **Lưu vào Ví**, tải lại Wallet và xác nhận credential vẫn có từ IndexedDB.
-6. Ở website, thêm ít nhất một sản phẩm 18+, chọn địa chỉ rồi bấm **Xác minh đủ 18 tuổi bằng Ví ZKP**.
+5. Chọn **Lưu vào Ví**, chờ xác nhận lưu hoàn tất rồi quay lại Website. Website phải hiển thị **Đã nhận vào Ví** và không còn nút nhận lại. Tải lại Wallet và xác nhận credential vẫn có từ IndexedDB; không mở hoặc sao chép giá trị record.
+6. Ở website, thêm ít nhất một sản phẩm 18+, chọn địa chỉ rồi bấm **Xác minh điều kiện tuổi**.
 7. Xác nhận popup nêu Bản Vị Việt, mệnh đề đủ 18 tuổi, mục đích mua sản phẩm hạn chế tuổi và hạn request; proof chưa tự chạy.
 8. Bấm **Đồng ý và tạo bằng chứng**. Chờ Wallet báo thành công và website gọi API.
 9. Chỉ khi API trả thành công, website phải hiện **Đã xác minh đủ 18 tuổi cho đơn hàng này** và các timing của đúng lần chạy: cache cold/warm, WASM, zkey, witness + proof, Wallet total, API verify và tổng sau consent.
@@ -33,7 +33,7 @@ Kiểm tra website `http://127.0.0.1:5173`, Wallet `http://127.0.0.1:5174`, API 
 1. Không nhập credential lại. Thêm hai sản phẩm 18+ vào cùng giỏ.
 2. Bấm xác minh một lần, đồng ý một lần; chỉ một challenge/proof/verification được tạo cho snapshot giỏ.
 3. Đặt COD và xác nhận cả hai dòng nằm trong cùng đơn.
-4. Với giỏ chỉ có sản phẩm thường, xác nhận nút Wallet không xuất hiện và checkout không tạo AgeChallenge.
+4. Với giỏ chỉ có sản phẩm thường, xác nhận hành động xác minh tuổi không xuất hiện và checkout không tạo AgeChallenge.
 
 ## Ca từ chối và chống giả mạo
 
@@ -70,6 +70,6 @@ Sau khi hoàn tất, đổi ba dòng benchmark sang số thực và thêm mã đ
 
 ## Giới hạn cần ghi khi trình bày
 
-Wallet, Issuer và setup là mô phỏng do một người vận hành; IndexedDB chưa mã hóa bằng PIN; popup web không phải browser extension hay mobile wallet; không có đồng bộ nhiều thiết bị. Luồng chứng minh sự phân tách vai trò và kiểm mật mã của demo, không phải kết luận pháp lý hoặc hạ tầng định danh production.
+Wallet, Issuer và setup là mô phỏng do một người vận hành. Credential trong IndexedDB được lưu dưới dạng envelope AES-256-GCM; khóa được dẫn xuất từ mã khóa Ví 8–64 ký tự bằng PBKDF2-SHA-256. Cơ chế này không chống mã độc/XSS khi Ví đang mở và không thay thế kho khóa phần cứng. Popup web không phải browser extension hay mobile wallet; không có đồng bộ nhiều thiết bị. Luồng chứng minh sự phân tách vai trò và kiểm mật mã của pilot, không phải kết luận pháp lý hoặc hạ tầng định danh production.
 
 Cho đến khi toàn bộ bước owner ở trên đạt và bảng benchmark có số đo thật, kết luận dự án giữ ở **READY AFTER OWNER TEST**.

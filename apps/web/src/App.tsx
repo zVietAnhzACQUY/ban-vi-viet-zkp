@@ -42,11 +42,21 @@ import {
   CircleCheck,
 } from "lucide-react";
 import Art from "./Art";
+import { PasswordField } from "./PasswordField";
+import { BusyButton } from "../../shared/BusyButton";
+import {
+  AboutPage,
+  FeaturedCategories,
+  StorefrontBenefits,
+} from "./StorefrontSections";
+import { storefrontTab } from "./storefront-navigation";
+import { ConfirmationProvider, useConfirmation } from "./ConfirmationDialog";
 import { LotRequestAction } from "./lot-request";
 import {
   api,
   issuerPortalOrigin,
   ApiError,
+  ApiTimeoutError,
   type User,
   type Product,
   type Cart,
@@ -60,7 +70,9 @@ import {
 import {
   openWalletPopup,
   requestProofFromWallet,
-  walletOrigin,
+  WalletFlowAbortedError,
+  WalletPopupBlockedError,
+  WalletResponseError,
 } from "./wallet";
 import { verifyLotStatus } from "./lot";
 import {
@@ -68,7 +80,11 @@ import {
   matchesProductSearch,
   normalizeVietnameseSearch,
 } from "./search";
-import { cartRequiresAgeProof } from "./checkout-policy";
+import {
+  cartRequiresAgeProof,
+  tryBeginAgeVerification,
+} from "./checkout-policy";
+import { preferredAddressId } from "./checkout-address";
 import {
   ageDetailPath,
   ageStatusCopy,
@@ -103,9 +119,7 @@ const lotStatusCopy: Record<string, { title: string; detail: string }> = {
 };
 const field = (f: HTMLFormElement) => Object.fromEntries(new FormData(f));
 const displayName = (name: string) =>
-  name
-    .replace(/(?:\s*\((?:demo|test)\)|\s+(?:demo|test))\s*$/i, "")
-    .trim();
+  name.replace(/(?:\s*\((?:demo|test)\)|\s+(?:demo|test))\s*$/i, "").trim();
 const prefersReducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 function scrollToCatalog() {
@@ -117,7 +131,7 @@ function scrollToCatalog() {
   );
 }
 function ScrollToTop() {
-  const { pathname, hash } = useLocation();
+  const { pathname, search, hash } = useLocation();
   useEffect(() => {
     const previous = window.history.scrollRestoration;
     window.history.scrollRestoration = "manual";
@@ -132,7 +146,7 @@ function ScrollToTop() {
       else window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [pathname, hash]);
+  }, [pathname, search, hash]);
   return null;
 }
 function useData<T>(path: string) {
@@ -141,8 +155,9 @@ function useData<T>(path: string) {
     [rev, bump] = useState(0);
   useEffect(() => {
     let alive = true;
+    const controller = new AbortController();
     err("");
-    api<T>(path)
+    api<T>(path, "GET", undefined, { signal: controller.signal, timeoutMs: 15000 })
       .then((data) => {
         if (alive) set({ path, data });
       })
@@ -151,6 +166,7 @@ function useData<T>(path: string) {
       });
     return () => {
       alive = false;
+      controller.abort();
     };
   }, [path, rev]);
   return {
@@ -166,13 +182,14 @@ function Notice({ children }: { children: ReactNode }) {
     </div>
   );
 }
-function Loading({ error }: { error?: string }) {
+function Loading({ error, retry }: { error?: string; retry?: () => void }) {
   return (
     <div className="empty">
       {error ? (
         <>
           <h2>Chưa tải được dữ liệu</h2>
-          <p role="alert">{error}</p>
+          <p role="alert">Không kết nối được dịch vụ. Vui lòng thử lại sau hoặc tải lại trang.</p>
+          {retry && <button className="button secondary" onClick={retry}>Thử tải lại</button>}
         </>
       ) : (
         <div className="loading-state" role="status" aria-live="polite">
@@ -187,6 +204,8 @@ function Loading({ error }: { error?: string }) {
   );
 }
 function Card({ p, onAdd }: { p: Product; onAdd: (id: string) => void }) {
+  const [adding, setAdding] = useState(false);
+  const addingRef = useRef(false);
   return (
     <article className="product-card">
       <Link className="art-link" to={"/san-pham/" + p.slug}>
@@ -209,11 +228,17 @@ function Card({ p, onAdd }: { p: Product; onAdd: (id: string) => void }) {
         </div>
         <button
           className="icon round"
-          disabled={!p.stock}
-          onClick={() => onAdd(p.id)}
-          aria-label={"Thêm " + p.name + " vào giỏ"}
+          disabled={!p.stock || adding}
+          aria-busy={adding}
+          onClick={async () => {
+            if (addingRef.current) return;
+            addingRef.current = true; setAdding(true);
+            try { await onAdd(p.id); }
+            finally { addingRef.current = false; setAdding(false); }
+          }}
+          aria-label={adding ? "Đang thêm vào giỏ" : "Thêm " + p.name + " vào giỏ"}
         >
-          <Plus size={18} />
+          {adding ? <span className="spinner" aria-hidden="true" /> : <Plus size={18} />}
         </button>
       </div>
     </article>
@@ -230,7 +255,7 @@ function ProductSearch() {
   function goToResults(nextValue: string) {
     const query = cleanSearchInput(nextValue);
     navigate({
-      pathname: "/",
+      pathname: "/cua-hang",
       search: query ? "?q=" + encodeURIComponent(query) : "",
       hash: "#thuc-qua",
     });
@@ -280,7 +305,8 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
     category = params.get("category") || params.get("danh-muc") || "",
     query = params.get("q") || "";
   const [sortBy, setSortBy] = useState("featured");
-  const { data, error } = useData<{
+  const landing = location.pathname === "/" && !category && !query;
+  const { data, error, reload } = useData<{
     products: Product[];
     categories: { id: string; slug: string; name: string }[];
   }>("/products");
@@ -291,8 +317,10 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
         matchesProductSearch(p, query),
     )
     .sort((a, b) => {
-      if (sortBy === "price-asc") return Number(BigInt(a.price) - BigInt(b.price));
-      if (sortBy === "price-desc") return Number(BigInt(b.price) - BigInt(a.price));
+      if (sortBy === "price-asc")
+        return Number(BigInt(a.price) - BigInt(b.price));
+      if (sortBy === "price-desc")
+        return Number(BigInt(b.price) - BigInt(a.price));
       if (sortBy === "name") return a.name.localeCompare(b.name, "vi");
       return 0;
     });
@@ -301,7 +329,7 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
     if (nextCategory) search.set("category", nextCategory);
     if (query) search.set("q", query);
     navigate({
-      pathname: nextCategory === "qua-tang" ? "/gifts" : "/",
+      pathname: nextCategory === "qua-tang" ? "/gifts" : "/cua-hang",
       search: search.toString() ? `?${search}` : "",
       hash: "#thuc-qua",
     });
@@ -309,48 +337,56 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
   }
   return (
     <>
-      <section className="hero">
-        <div className="hero-copy">
-          <div className="eyebrow">
-            <span /> TỪ NHỮNG MIỀN ĐẤT VIỆT
+      {landing && (
+        <section className="hero">
+          <div className="hero-copy">
+            <div className="eyebrow">
+              <span /> TỪ NHỮNG MIỀN ĐẤT VIỆT
+            </div>
+            <h1>
+              Gói một miền thương.
+              <br />
+              <em>Trao một vị Việt.</em>
+            </h1>
+            <p>
+              Những thức quà mộc mạc, mang theo câu chuyện của đất và người.
+              Chọn cho mình, gửi đến người thương.
+            </p>
+            <Link className="button" to="/cua-hang#thuc-qua">
+              Khám phá thức quà <ArrowRight size={18} />
+            </Link>
+            <Link
+              className="hero-secondary"
+              to="/gifts?category=qua-tang#thuc-qua"
+            >
+              Chọn quà cho người thương <ArrowRight size={16} />
+            </Link>
+            <div className="hero-foot">
+              <span>CHỌN LỌC TỪ TÂM</span>
+              <span>•</span>
+              <span>ĐẬM VỊ QUÊ NHÀ</span>
+            </div>
           </div>
-          <h1>
-            Gói một miền thương.
-            <br />
-            <em>Trao một vị Việt.</em>
-          </h1>
-          <p>
-            Những thức quà mộc mạc, mang theo câu chuyện của đất và người. Chọn
-            cho mình, gửi đến người thương.
-          </p>
-          <a className="button" href="#thuc-qua">
-            Khám phá thức quà <ArrowRight size={18} />
-          </a>
-          <div className="hero-foot">
-            <span>CHỌN LỌC TỪ TÂM</span>
-            <span>•</span>
-            <span>ĐẬM VỊ QUÊ NHÀ</span>
+          <div className="hero-scene">
+            <div className="sun-mark">
+              BẢN VỊ VIỆT
+              <br />
+              <Leaf size={30} />
+              <small>GÌN GIỮ VỊ QUEN</small>
+            </div>
+            <div className="hero-pack pack-one">
+              <Art kind="tea" name="Trà sen" tone="#678069" priority />
+            </div>
+            <div className="hero-pack pack-two">
+              <Art kind="coffee" name="Cà phê" tone="#a76642" priority />
+            </div>
+            <div className="hero-caption">
+              <span>01 / BỘ SƯU TẬP</span>
+              <strong>Hương vị từ những điều giản dị</strong>
+            </div>
           </div>
-        </div>
-        <div className="hero-scene">
-          <div className="sun-mark">
-            BẢN VỊ VIỆT
-            <br />
-            <Leaf size={30} />
-            <small>GÌN GIỮ VỊ QUEN</small>
-          </div>
-          <div className="hero-pack pack-one">
-            <Art kind="tea" name="Trà sen" tone="#678069" priority />
-          </div>
-          <div className="hero-pack pack-two">
-            <Art kind="coffee" name="Cà phê" tone="#a76642" priority />
-          </div>
-          <div className="hero-caption">
-            <span>01 / BỘ SƯU TẬP</span>
-            <strong>Hương vị từ những điều giản dị</strong>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
       <div className="promise-strip">
         <span>
           <Leaf /> Thức quà Việt được chọn lọc
@@ -362,11 +398,20 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
           <Truck /> Thanh toán khi nhận hàng
         </span>
       </div>
+      {landing && <FeaturedCategories />}
       <section className="catalog section" id="thuc-qua">
         <div className="section-heading">
           <div>
             <span className="eyebrow">MỖI VÙNG ĐẤT, MỘT DẤU VỊ</span>
-            <h2>Chọn một thức quà</h2>
+            {landing ? (
+              <h2>Thức quà được yêu thích</h2>
+            ) : (
+              <h1 className="catalog-title">
+                {category === "qua-tang"
+                  ? "Quà tặng từ những miền thương"
+                  : "Cửa hàng thức quà Việt"}
+              </h1>
+            )}
           </div>
           <p>
             Một chút thân quen cho ngày thường.
@@ -415,16 +460,14 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
             <button
               type="button"
               className="text-button"
-              onClick={() =>
-                setParams(category ? { category } : {})
-              }
+              onClick={() => setParams(category ? { category } : {})}
             >
               Xóa tìm kiếm
             </button>
           </div>
         )}
         {!data ? (
-          <Loading error={error} />
+          <Loading error={error} retry={reload} />
         ) : products?.length ? (
           <div className="product-grid">
             {products.map((p) => (
@@ -439,14 +482,15 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
             <button
               type="button"
               className="button"
-              onClick={() => chooseCategory("")}
+              onClick={() => navigate("/cua-hang#thuc-qua")}
             >
               Xem tất cả sản phẩm
             </button>
           </div>
         )}
       </section>
-      <section className="story">
+      {landing && <StorefrontBenefits />}
+      {landing && <section className="story">
         <div className="story-seal" aria-label="Bản Vị Việt">
           <span>bản vị</span>
           <em>việt</em>
@@ -467,7 +511,7 @@ function Home({ onAdd }: { onAdd: (id: string) => void }) {
             Chọn quà cho người thương <ArrowRight size={17} />
           </Link>
         </div>
-      </section>
+      </section>}
     </>
   );
 }
@@ -477,7 +521,8 @@ function ProductPage({
   onAdd: (id: string, quantity?: number) => void;
 }) {
   const { slug } = useParams();
-  const { data: p, error } = useData<Product>("/products/" + slug);
+  const { data: p, error, reload } = useData<Product>("/products/" + slug);
+  const related = useData<{ products: Product[] }>("/products");
   const [lotOpen, open] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [lotChecks, setLotChecks] = useState<
@@ -491,7 +536,7 @@ function ProductPage({
       }
     >
   >({});
-  if (!p) return <Loading error={error} />;
+  if (!p) return <Loading error={error} retry={reload} />;
   async function checkLot(lotId: string, lotCode: string) {
     setLotChecks((current) => ({
       ...current,
@@ -622,8 +667,8 @@ function ProductPage({
             {lotOpen && (
               <div className="lot-content">
                 <p>
-                  Kiểm tra thông tin vùng đã được đơn vị xác nhận ký cho từng
-                  lô và đối chiếu với trạng thái hiện tại.
+                  Kiểm tra thông tin vùng đã được đơn vị xác nhận ký cho từng lô
+                  và đối chiếu với trạng thái hiện tại.
                 </p>
                 {p.lots?.length ? (
                   p.lots.map((l) => (
@@ -685,6 +730,24 @@ function ProductPage({
           </div>
         </div>
       </div>
+      <section className="related-products" aria-labelledby="related-heading">
+        <div className="section-heading">
+          <h2 id="related-heading">Thêm một chút thân quen</h2>
+          <Link className="text-link" to="/cua-hang#thuc-qua">
+            Xem cửa hàng <ArrowRight size={16} />
+          </Link>
+        </div>
+        <div className="product-grid">
+          {related.data?.products
+            .filter(
+              (item) => item.id !== p.id && item.category.id === p.category.id,
+            )
+            .slice(0, 4)
+            .map((item) => (
+              <Card key={item.id} p={item} onAdd={onAdd} />
+            ))}
+        </div>
+      </section>
     </section>
   );
 }
@@ -697,23 +760,95 @@ function CartPage({
   onCount: () => void;
   notify: (s: string) => void;
 }) {
+  const confirmAction = useConfirmation();
   const nav = useNavigate();
   const { data, error, reload } = useData<Cart & { quote: string }>("/cart");
   const addressData = useData<Address[]>("/me/addresses");
   const [addressId, setAddress] = useState(""),
+    [addressPickerOpen, setAddressPickerOpen] = useState(false),
+    [draftAddressId, setDraftAddressId] = useState(""),
     [busy, setBusy] = useState(false),
     [err, setErr] = useState(""),
     [ageVerification, setAgeVerification] =
       useState<AgeVerificationResult | null>(null),
     [verificationTiming, setVerificationTiming] = useState(""),
-    [proofStatus, setProofStatus] = useState("");
+    [proofStatus, setProofStatus] = useState(""),
+    [missingCredential, setMissingCredential] = useState(false),
+    [popupBlocked, setPopupBlocked] = useState(false);
   const key = useRef(crypto.randomUUID());
+  const verificationGuard = useRef(false);
+  const verificationPopup = useRef<Window | null>(null);
+  const verificationAbort = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      verificationAbort.current?.abort();
+      const popup = verificationPopup.current;
+      if (popup && !popup.closed) popup.close();
+      verificationPopup.current = null;
+    },
+    [],
+  );
   useEffect(() => {
     key.current = crypto.randomUUID();
   }, [data?.quote, addressId]);
+  useEffect(() => {
+    if (!addressData.data) return;
+    setAddress((current) => preferredAddressId(addressData.data!, current));
+  }, [addressData.data]);
+  const selectedAddress =
+    addressData.data?.find((address) => address.id === addressId) ?? null;
+  function openAddressPicker() {
+    setDraftAddressId(
+      addressId || preferredAddressId(addressData.data ?? [], ""),
+    );
+    setAddressPickerOpen(true);
+  }
+  function applyAddress() {
+    if (!draftAddressId) return;
+    setAddress(draftAddressId);
+    setAddressPickerOpen(false);
+  }
+  const restricted = Boolean(data && cartRequiresAgeProof(data.items));
+  useEffect(() => {
+    if (!user || !data || !restricted) {
+      if (data && !restricted) setAgeVerification(null);
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    api<AgeVerificationResult | null>(
+      "/age/verifications/current",
+      "GET",
+      undefined,
+      {
+        signal: controller.signal,
+        timeoutMs: 10_000,
+      },
+    )
+      .then((verification) => {
+        if (!active) return;
+        if (verification) {
+          setAgeVerification(verification);
+          setVerificationTiming(
+            "Đã khôi phục kết quả xác minh còn hiệu lực cho giỏ hàng này.",
+          );
+        }
+      })
+      .catch((reason) => {
+        if (active && (reason as Error).name !== "AbortError")
+          setErr(
+            "Chưa thể kiểm tra kết quả xác minh trước đó. Bạn vẫn có thể thử xác minh lại.",
+          );
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [user?.id, data?.quote, restricted]);
   if (!user) return <AuthPrompt />;
-  if (!data) return <Loading error={error} />;
-  const restricted = cartRequiresAgeProof(data.items);
+  if (!data) return <Loading error={error} retry={reload} />;
   function invalidateAgeVerification(showMessage = true) {
     if (ageVerification && showMessage)
       setErr("Thông tin đơn hàng đã thay đổi. Vui lòng xác minh lại độ tuổi.");
@@ -737,39 +872,134 @@ function CartPage({
   async function verifyAge() {
     if (!addressId)
       return setErr("Hãy chọn địa chỉ nhận hàng trước khi xác minh độ tuổi.");
+    if (!tryBeginAgeVerification(verificationGuard)) return;
     setBusy(true);
     setErr("");
+    setMissingCredential(false);
+    setPopupBlocked(false);
     setProofStatus("Đang khởi tạo phiên xác minh an toàn…");
     let popup: Window | null = null;
+    let challenge: AgeChallenge | null = null;
+    const controller = new AbortController();
+    verificationAbort.current = controller;
     try {
       // Mở đồng bộ từ thao tác bấm để trình duyệt không chặn popup.
       popup = openWalletPopup();
-      const challenge = await api<AgeChallenge>("/age/challenges", "POST", {});
+      verificationPopup.current = popup;
+      challenge = await api<AgeChallenge>(
+        "/age/challenges",
+        "POST",
+        {},
+        {
+          signal: controller.signal,
+          timeoutMs: 15_000,
+        },
+      );
+      if (controller.signal.aborted) throw new WalletFlowAbortedError();
       setProofStatus("Đang chờ bạn xác nhận trong Ví…");
-      const walletResponse = await requestProofFromWallet(challenge, popup);
+      const walletResponse = await requestProofFromWallet(
+        challenge,
+        popup,
+        controller.signal,
+      );
       setProofStatus("Đang kiểm tra kết quả xác minh…");
       const verified = await api<AgeVerificationResult>(
         "/age/verifications",
         "POST",
         walletResponse.proofBundle,
+        { signal: controller.signal, timeoutMs: 30_000 },
       );
       if (verified.challengeId !== challenge.id)
         throw new Error("Kết quả không thuộc yêu cầu xác minh đang chờ.");
+      if (!mounted.current) return;
       setAgeVerification(verified);
       const cacheLabel =
         walletResponse.timings.cache === "cold" ? "cache lạnh" : "cache ấm";
       setVerificationTiming(
-        `${cacheLabel} · tải WASM: ${Math.round(walletResponse.timings.wasmLoadMs)} ms · tải zkey: ${Math.round(walletResponse.timings.zkeyLoadMs)} ms · tạo witness + proof: ${Math.round(walletResponse.timings.proofMs)} ms · Ví: ${Math.round(walletResponse.timings.walletTotalMs)} ms · API verify: ${Math.round(verified.serverVerificationMs)} ms · tổng sau đồng ý: ${Math.max(0, Date.now() - walletResponse.timings.consentedAtEpochMs)} ms`,
+        `${cacheLabel} · tải WASM: ${Math.round(walletResponse.timings.wasmLoadMs)} ms · tải zkey: ${Math.round(walletResponse.timings.zkeyLoadMs)} ms · tạo witness + proof: ${Math.round(walletResponse.timings.proofMs)} ms · Ví: ${Math.round(walletResponse.timings.walletTotalMs)} ms · API verify: ${Math.round(verified.serverVerificationMs ?? 0)} ms · tổng sau đồng ý: ${Math.max(0, Date.now() - walletResponse.timings.consentedAtEpochMs)} ms`,
       );
-      popup.close();
+      if (!popup.closed) popup.close();
     } catch (e) {
       if (popup && !popup.closed) popup.close();
+      if (!mounted.current || e instanceof WalletFlowAbortedError) return;
+      if (
+        (e instanceof ApiTimeoutError || (e as Error).name === "TypeError") &&
+        challenge
+      ) {
+        try {
+          const recovered = await api<AgeVerificationResult | null>(
+            "/age/verifications/current",
+            "GET",
+            undefined,
+            { timeoutMs: 10_000 },
+          );
+          if (mounted.current && recovered?.challengeId === challenge.id) {
+            setAgeVerification(recovered);
+            setVerificationTiming(
+              "Máy chủ đã xác nhận kết quả cho giỏ hàng này.",
+            );
+            setErr("");
+            return;
+          }
+        } catch {
+          /* Giữ lỗi ban đầu nếu không thể khôi phục. */
+        }
+      }
       setAgeVerification(null);
       setVerificationTiming("");
-      setErr((e as Error).message);
+      if (e instanceof WalletResponseError && e.code === "NO_CREDENTIAL") {
+        setMissingCredential(true);
+        setErr("Bạn chưa có thông tin xác minh tuổi trong Ví.");
+      } else if (
+        e instanceof WalletResponseError &&
+        e.code === "USER_REJECTED"
+      ) {
+        setErr("Bạn đã từ chối yêu cầu xác minh trong Ví.");
+      } else if (
+        e instanceof WalletResponseError &&
+        e.code === "PROOF_FAILED"
+      ) {
+        setErr(
+          "Ví chưa thể hoàn tất xác minh. Hãy kiểm tra thông tin trong Ví và thử lại.",
+        );
+      } else if (e instanceof WalletPopupBlockedError) {
+        setPopupBlocked(true);
+        setErr(e.message);
+      } else if (e instanceof ApiTimeoutError) {
+        setErr(
+          "Không nhận được phản hồi từ máy chủ xác minh. Vui lòng thử lại.",
+        );
+      } else if (e instanceof ApiError && e.code === "CHALLENGE_EXPIRED") {
+        setErr("Yêu cầu xác minh đã hết hạn. Vui lòng thử lại.");
+      } else if (
+        e instanceof ApiError &&
+        [
+          "PROOF_INVALID",
+          "PUBLIC_SIGNALS_INVALID",
+          "ISSUER_SIGNATURE_INVALID",
+        ].includes(e.code)
+      ) {
+        setErr("Kết quả xác minh không hợp lệ. Vui lòng thử lại từ Ví.");
+      } else if (e instanceof ApiError && e.code === "CART_CHANGED") {
+        setErr("Giỏ hàng đã thay đổi. Vui lòng xác minh lại.");
+      } else if (
+        e instanceof ApiError &&
+        ["CREDENTIAL_LIFECYCLE_INVALID", "CREDENTIAL_EXPIRED"].includes(e.code)
+      ) {
+        setErr(
+          "Thông tin xác minh trong Ví đã hết hạn hoặc bị thu hồi. Vui lòng nhận thông tin mới.",
+        );
+      } else if (e instanceof ApiError && e.status >= 500) {
+        setErr("Không kết nối được API xác minh. Vui lòng thử lại.");
+      } else setErr((e as Error).message);
     } finally {
-      setBusy(false);
-      setProofStatus("");
+      verificationGuard.current = false;
+      verificationAbort.current = null;
+      verificationPopup.current = null;
+      if (mounted.current) {
+        setBusy(false);
+        setProofStatus("");
+      }
     }
   }
   async function checkout() {
@@ -845,43 +1075,41 @@ function CartPage({
               {addressData.error && (
                 <p className="error">{addressData.error}</p>
               )}
-              {addressData.data?.length ? (
-                <div className="address-options">
-                  {addressData.data.map((a) => (
-                    <label
-                      className={
-                        "address-choice " +
-                        (addressId === a.id ? "selected" : "")
-                      }
-                      key={a.id}
-                    >
-                      <input
-                        type="radio"
-                        name="address"
-                        value={a.id}
-                        checked={addressId === a.id}
-                        onChange={() => {
-                          if (a.id !== addressId) invalidateAgeVerification();
-                          setAddress(a.id);
-                        }}
-                      />
-                      <span>
-                        <strong>
-                          {a.name} · {a.phone}
-                        </strong>
-                        <small>
-                          {a.line}, {a.city}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
+              {selectedAddress ? (
+                <div className="selected-address-card">
+                  <div>
+                    <strong>{selectedAddress.name}</strong>
+                    {selectedAddress.isDefault && (
+                      <span className="address-default-badge">Mặc định</span>
+                    )}
+                  </div>
+                  <span>{selectedAddress.phone}</span>
+                  <p>
+                    {selectedAddress.line}, {selectedAddress.city}
+                  </p>
                 </div>
               ) : (
-                <p>Bạn chưa có địa chỉ nhận hàng.</p>
+                <div className="address-empty-state">
+                  <MapPin size={28} />
+                  <div>
+                    <strong>Chưa có địa chỉ nhận hàng</strong>
+                    <p>Thêm địa chỉ để tiếp tục đặt đơn.</p>
+                  </div>
+                </div>
               )}
-              <Link className="text-link" to="/dia-chi">
-                Quản lý hoặc thêm địa chỉ <ArrowRight size={16} />
-              </Link>
+              {selectedAddress ? (
+                <button
+                  type="button"
+                  className="text-button address-change"
+                  onClick={openAddressPicker}
+                >
+                  Thay đổi địa chỉ
+                </button>
+              ) : (
+                <Link className="button" to="/dia-chi">
+                  Thêm địa chỉ nhận hàng <ArrowRight size={16} />
+                </Link>
+              )}
             </section>
 
             <section className="checkout-flow-section">
@@ -895,59 +1123,63 @@ function CartPage({
               <div className="cart-list">
                 {data.items.map((i) => (
                   <article className="cart-item" key={i.product.id}>
-                  <Link to={"/san-pham/" + i.product.slug}>
-                    <Art
-                      kind={i.product.art}
-                      name={i.product.name}
-                      tone={i.product.tone}
-                    />
-                  </Link>
-                  <div className="cart-item-copy">
                     <Link to={"/san-pham/" + i.product.slug}>
-                      {i.product.name}
+                      <Art
+                        kind={i.product.art}
+                        name={i.product.name}
+                        tone={i.product.tone}
+                      />
                     </Link>
-                    <small>
-                      {i.product.weight}
-                      {i.product.requiresAgeProof ? " · Yêu cầu 18+" : ""}
-                    </small>
-                    <div className="quantity">
+                    <div className="cart-item-copy">
+                      <Link to={"/san-pham/" + i.product.slug}>
+                        {i.product.name}
+                      </Link>
+                      <small>
+                        {i.product.weight}
+                        {i.product.requiresAgeProof ? " · Yêu cầu 18+" : ""}
+                      </small>
+                      <div className="quantity">
+                        <button
+                          aria-label={"Giảm " + i.product.name}
+                          disabled={busy}
+                          onClick={() => change(i.product.id, i.quantity - 1)}
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span>{i.quantity}</span>
+                        <button
+                          aria-label={"Tăng " + i.product.name}
+                          disabled={busy || i.quantity >= i.product.stock}
+                          onClick={() => change(i.product.id, i.quantity + 1)}
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="cart-price">
+                      <strong>
+                        {money(
+                          (
+                            BigInt(i.product.price) * BigInt(i.quantity)
+                          ).toString(),
+                        )}
+                      </strong>
+                      <small>{money(i.product.price)} / sản phẩm</small>
                       <button
-                        aria-label={"Giảm " + i.product.name}
+                        className="text-button"
                         disabled={busy}
-                        onClick={() => change(i.product.id, i.quantity - 1)}
+                        onClick={async () => {
+                          if (
+                            await confirmAction({
+                              title: `Xóa ${i.product.name} khỏi giỏ hàng?`,
+                            })
+                          )
+                            change(i.product.id, 0);
+                        }}
                       >
-                        <Minus size={14} />
-                      </button>
-                      <span>{i.quantity}</span>
-                      <button
-                        aria-label={"Tăng " + i.product.name}
-                        disabled={busy || i.quantity >= i.product.stock}
-                        onClick={() => change(i.product.id, i.quantity + 1)}
-                      >
-                        <Plus size={14} />
+                        <Trash2 size={14} /> Xóa
                       </button>
                     </div>
-                  </div>
-                  <div className="cart-price">
-                    <strong>
-                      {money(
-                        (
-                          BigInt(i.product.price) * BigInt(i.quantity)
-                        ).toString(),
-                      )}
-                    </strong>
-                    <small>{money(i.product.price)} / sản phẩm</small>
-                    <button
-                      className="text-button"
-                      disabled={busy}
-                      onClick={() => {
-                        if (confirm(`Xóa ${i.product.name} khỏi giỏ hàng?`))
-                          change(i.product.id, 0);
-                      }}
-                    >
-                      <Trash2 size={14} /> Xóa
-                    </button>
-                  </div>
                   </article>
                 ))}
               </div>
@@ -1010,27 +1242,33 @@ function CartPage({
                         ? "Xác minh lại điều kiện tuổi"
                         : "Xác minh điều kiện tuổi"}
                     </button>
-                    <button
-                      className="text-button"
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        window.open(
-                          walletOrigin(),
-                          "bvv-zkp-wallet-manage",
-                          "width=520,height=760",
-                        )
-                      }
-                    >
-                      Mở Ví xác minh tuổi
-                    </button>
                     {ageVerification && (
                       <small className="credential-ok" role="status">
-                        <CircleCheck size={16} /> Đã xác minh điều kiện tuổi
-                        cho đơn hàng này
+                        <CircleCheck size={16} /> Đã xác minh điều kiện tuổi cho
+                        đơn hàng này
                       </small>
                     )}
                   </div>
+                  {missingCredential && (
+                    <div className="verification-help">
+                      <p>Bạn chưa có thông tin xác minh tuổi trong Ví.</p>
+                      <Link
+                        className="button secondary"
+                        to="/tai-khoan#age-verification-management"
+                      >
+                        Xem hướng dẫn nhận thông tin xác minh
+                      </Link>
+                    </div>
+                  )}
+                  {popupBlocked && (
+                    <div className="verification-help">
+                      <p>
+                        Hãy cho phép cửa sổ bật lên cho địa chỉ Website này
+                        trong cài đặt trình duyệt, sau đó bấm lại “Xác minh điều
+                        kiện tuổi”.
+                      </p>
+                    </div>
+                  )}
                   {proofStatus && (
                     <div className="verification-progress" role="status">
                       <span className="spinner" /> {proofStatus}
@@ -1070,14 +1308,16 @@ function CartPage({
               <span>Tổng thanh toán</span>
               <strong>{money(data.total)}</strong>
             </div>
-            <button
+            <BusyButton
               className="button full"
+              busy={busy}
+              busyLabel={proofStatus || "Đang đặt đơn…"}
               disabled={busy || !addressId || (restricted && !ageVerification)}
               onClick={checkout}
             >
-              {busy ? proofStatus || "Đang đặt đơn…" : "Xác nhận đặt hàng"}
+              Xác nhận đặt hàng
               <ArrowRight size={18} />
-            </button>
+            </BusyButton>
             {!addressId ? (
               <p className="checkout-gate" role="status">
                 Chọn địa chỉ nhận hàng để tiếp tục.
@@ -1099,6 +1339,74 @@ function CartPage({
               <ArrowLeft size={15} /> Tiếp tục chọn quà
             </Link>
           </aside>
+          {addressPickerOpen && (
+            <div
+              className="checkout-modal-backdrop"
+              role="presentation"
+              onMouseDown={() => setAddressPickerOpen(false)}
+            >
+              <section
+                className="checkout-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="address-picker-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="checkout-modal-heading">
+                  <div>
+                    <span className="eyebrow">GIAO HÀNG</span>
+                    <h2 id="address-picker-title">Chọn địa chỉ nhận hàng</h2>
+                  </div>
+                  <button
+                    className="icon-button"
+                    aria-label="Đóng"
+                    onClick={() => setAddressPickerOpen(false)}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="address-options">
+                  {addressData.data?.map((address) => (
+                    <label
+                      className={
+                        "address-choice " +
+                        (draftAddressId === address.id ? "selected" : "")
+                      }
+                      key={address.id}
+                    >
+                      <input
+                        type="radio"
+                        name="checkout-address"
+                        checked={draftAddressId === address.id}
+                        onChange={() => setDraftAddressId(address.id)}
+                      />
+                      <span>
+                        <strong>
+                          {address.name} · {address.phone}
+                        </strong>
+                        <small>
+                          {address.line}, {address.city}
+                        </small>
+                        {address.isDefault && <em>Mặc định</em>}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div className="checkout-modal-actions">
+                  <Link className="text-link" to="/dia-chi">
+                    Quản lý hoặc thêm địa chỉ
+                  </Link>
+                  <button
+                    className="button"
+                    disabled={!draftAddressId}
+                    onClick={applyAddress}
+                  >
+                    Sử dụng địa chỉ này
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -1127,8 +1435,11 @@ function Auth({
     [params] = useSearchParams(),
     [busy, setBusy] = useState(false),
     [err, setErr] = useState("");
+  const submitting = useRef(false);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setErr("");
     try {
@@ -1140,13 +1451,16 @@ function Auth({
       onUser(r.user);
       const returnUrl = params.get("returnUrl");
       nav(
-        returnUrl?.startsWith("/") && !returnUrl.startsWith("//") && !/[\\\x00-\x1f]/.test(returnUrl)
+        returnUrl?.startsWith("/") &&
+          !returnUrl.startsWith("//") &&
+          !/[\\\x00-\x1f]/.test(returnUrl)
           ? returnUrl
           : "/",
       );
     } catch (e) {
       setErr((e as Error).message);
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -1168,7 +1482,7 @@ function Auth({
           Gửi những món quà đến đúng người thương.
         </p>
       </div>
-      <form className="form-panel" onSubmit={submit}>
+      <form className="form-panel" onSubmit={submit} aria-busy={busy}>
         <span className="eyebrow">CHÀO BẠN GHÉ THĂM</span>
         <h2>{register ? "Tạo tài khoản" : "Mừng bạn trở lại"}</h2>
         <p>
@@ -1197,29 +1511,25 @@ function Auth({
           Email
           <input name="email" type="email" required autoComplete="email" />
         </label>
-        <label>
-          Mật khẩu
-          <input
+        <PasswordField label="Mật khẩu"
             name="password"
-            type="password"
             required
             minLength={10}
             maxLength={128}
             autoComplete={register ? "new-password" : "current-password"}
           />
-        </label>
         {register && (
           <small className="muted">
             Dùng ít nhất 10 ký tự và không sử dụng lại mật khẩu ở dịch vụ khác.
           </small>
         )}
-        <button className="button full" disabled={busy}>
-          {busy ? "Đang xử lý…" : register ? "Đăng ký" : "Đăng nhập"}
+        <BusyButton className="button full" busy={busy} busyLabel="Đang xử lý…" disabled={busy}>
+          {register ? "Đăng ký" : "Đăng nhập"}
           <ArrowRight size={18} />
-        </button>
+        </BusyButton>
         <p className="small">
           {register ? "Đã có tài khoản?" : "Lần đầu ghé thăm?"}{" "}
-          <Link to={register ? "/dang-nhap" : "/dang-ky"}>
+          <Link to={(register ? "/dang-nhap" : "/dang-ky") + (params.toString() ? "?" + params.toString() : "")}>
             {register ? "Đăng nhập" : "Tạo tài khoản"}
           </Link>
         </p>
@@ -1228,40 +1538,98 @@ function Auth({
   );
 }
 function CredentialRequestPanel() {
-  const { data: latest, error } = useData<AgeCredentialStatus | null>("/me/age-credential-status");
+  const {
+    data: latest,
+    error,
+    reload,
+  } = useData<AgeCredentialStatus | null>("/me/age-credential-status");
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [createError, setCreateError] = useState("");
+  useEffect(() => {
+    const refetch = () => reload();
+    window.addEventListener("focus", refetch);
+    document.addEventListener("visibilitychange", refetch);
+    return () => {
+      window.removeEventListener("focus", refetch);
+      document.removeEventListener("visibilitychange", refetch);
+    };
+  }, []);
   async function createRequest() {
     setBusy(true);
     setCreateError("");
     try {
-      const request = await api<AgeCredentialStatus>("/me/age-credential-requests", "POST", {});
-      window.location.assign(issuerPortalOrigin() + "/submit-age/" + encodeURIComponent(request.id));
+      const request = await api<AgeCredentialStatus>(
+        "/me/age-credential-requests",
+        "POST",
+        {},
+      );
+      window.location.assign(
+        issuerPortalOrigin() + "/submit-age/" + encodeURIComponent(request.id),
+      );
     } catch (reason) {
       setCreateError((reason as Error).message);
       setBusy(false);
     }
   }
   return (
-    <div className="panel">
+    <div className="panel" id="age-verification-management">
       <span className="eyebrow">XÁC MINH ĐỘ TUỔI</span>
       <h2>Yêu cầu xác minh tuổi</h2>
-      <p>Theo dõi yêu cầu xác minh tuổi và nhận thông tin xác minh khi Issuer hoàn tất xử lý.</p>
+      <p>
+        Theo dõi yêu cầu xác minh tuổi và nhận thông tin xác minh khi Issuer
+        hoàn tất xử lý.
+      </p>
       {error && <p className="error">{error}</p>}
       {createError && <p className="error">{createError}</p>}
       {latest && (
         <div className="age-request-summary">
           <p>
-            <strong>Mã yêu cầu: {latest.id.slice(0, 8).toUpperCase()}</strong><br />
-            <small>Gửi lúc {new Date(latest.createdAt).toLocaleString("vi-VN")}</small><br />
-            <small>Trạng thái: {latest.status === "PENDING" ? latest.recordSubmitted ? "Đã gửi hồ sơ – đang chờ xử lý" : "Chưa cung cấp hồ sơ" : ageStatusCopy[latest.status]}</small>
+            <strong>Mã yêu cầu: {latest.id.slice(0, 8).toUpperCase()}</strong>
+            <br />
+            <small>
+              Gửi lúc {new Date(latest.createdAt).toLocaleString("vi-VN")}
+            </small>
+            <br />
+            <small>
+              Trạng thái:{" "}
+              {latest.status === "PENDING"
+                ? latest.recordSubmitted
+                  ? "Đã gửi hồ sơ – đang chờ xử lý"
+                  : "Chưa cung cấp hồ sơ"
+                : latest.status === "ISSUED" && latest.walletReceived
+                  ? "Đã nhận vào Ví"
+                  : ageStatusCopy[latest.status]}
+            </small>
           </p>
-          <Link className="button secondary" to={ageDetailPath(latest.id)}>Xem chi tiết</Link>
-          {latest.status === "PENDING" && !latest.recordSubmitted && <a className="button" href={issuerPortalOrigin()+"/submit-age/"+encodeURIComponent(latest.id)}>Tiếp tục cung cấp hồ sơ</a>}
+          <Link className="button secondary" to={ageDetailPath(latest.id)}>
+            Xem chi tiết
+          </Link>
+          {latest.status === "PENDING" && !latest.recordSubmitted && (
+            <a
+              className="button"
+              href={
+                issuerPortalOrigin() +
+                "/submit-age/" +
+                encodeURIComponent(latest.id)
+              }
+            >
+              Tiếp tục cung cấp hồ sơ
+            </a>
+          )}
         </div>
       )}
-      {!latest && <button className="button" disabled={busy} onClick={() => void createRequest()}>{busy ? "Đang gửi yêu cầu…" : "Gửi yêu cầu xác minh"}</button>}
+      {!latest && (
+        <BusyButton
+          className="button"
+          busy={busy}
+          busyLabel="Đang gửi yêu cầu…"
+          disabled={busy}
+          onClick={() => void createRequest()}
+        >
+          Gửi yêu cầu xác minh
+        </BusyButton>
+      )}
     </div>
   );
 }
@@ -1275,7 +1643,9 @@ function AgeVerificationDetail({ user }: { user: User | null }) {
   async function refresh() {
     setBusy(true);
     try {
-      setRequest(await api<AgeCredentialStatus>("/me/age-credential-requests/" + id));
+      setRequest(
+        await api<AgeCredentialStatus>("/me/age-credential-requests/" + id),
+      );
       setError("");
     } catch (reason) {
       setRequest(null);
@@ -1289,6 +1659,16 @@ function AgeVerificationDetail({ user }: { user: User | null }) {
     if (user) void refresh();
   }, [id, user?.id]);
   useEffect(() => {
+    if (!user) return;
+    const refetch = () => void refresh();
+    window.addEventListener("focus", refetch);
+    document.addEventListener("visibilitychange", refetch);
+    return () => {
+      window.removeEventListener("focus", refetch);
+      document.removeEventListener("visibilitychange", refetch);
+    };
+  }, [id, user?.id]);
+  useEffect(() => {
     if (!user || !request || terminalAgeStatus(request.status)) return;
     return startAgePolling(() => void refresh());
   }, [id, request?.status, user?.id]);
@@ -1296,37 +1676,102 @@ function AgeVerificationDetail({ user }: { user: User | null }) {
   if (!user) return <AuthPrompt />;
 
   const stages = ["PENDING", "APPROVED", "ISSUING", "ISSUED"] as const;
-  const position = request ? stages.indexOf(request.status as (typeof stages)[number]) : -1;
+  const position = request
+    ? stages.indexOf(request.status as (typeof stages)[number])
+    : -1;
   return (
     <section className="section age-verification-detail">
       <span className="eyebrow">TÀI KHOẢN · XÁC MINH ĐỘ TUỔI</span>
       <h1 className="page-title">Tiến trình yêu cầu AGE</h1>
-      <p>Hồ sơ được đối chiếu ngoài Website. Bản Vị Việt không thu thập ảnh giấy tờ hoặc ngày sinh.</p>
-      {error && <p className="error" role="alert">{error}</p>}
+      <p>
+        Hồ sơ được đối chiếu ngoài Website. Bản Vị Việt không thu thập ảnh giấy
+        tờ hoặc ngày sinh.
+      </p>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       {request && (
         <div className="panel">
           <div className="age-detail-meta">
-            <div><small>Mã yêu cầu</small><strong>{request.id.slice(0, 8).toUpperCase()}</strong></div>
-            <div><small>Thời gian gửi</small><strong>{new Date(request.createdAt).toLocaleString("vi-VN")}</strong></div>
-            <div><small>Trạng thái</small><strong>{request.status === "PENDING" ? request.recordSubmitted ? "Đã gửi hồ sơ – đang chờ xử lý" : "Chưa cung cấp hồ sơ" : ageStatusCopy[request.status]}</strong></div>
+            <div>
+              <small>Mã yêu cầu</small>
+              <strong>{request.id.slice(0, 8).toUpperCase()}</strong>
+            </div>
+            <div>
+              <small>Thời gian gửi</small>
+              <strong>
+                {new Date(request.createdAt).toLocaleString("vi-VN")}
+              </strong>
+            </div>
+            <div>
+              <small>Trạng thái</small>
+              <strong>
+                {request.status === "PENDING"
+                  ? request.recordSubmitted
+                    ? "Đã gửi hồ sơ – đang chờ xử lý"
+                    : "Chưa cung cấp hồ sơ"
+                  : request.status === "ISSUED" && request.walletReceived
+                    ? "Đã nhận vào Ví"
+                    : ageStatusCopy[request.status]}
+              </strong>
+            </div>
           </div>
           <ol className="age-progress">
             {stages.map((stage, index) => (
               <li className={index <= position ? "done" : ""} key={stage}>
                 <span>{index + 1}</span>
-                <div><strong>{stage}</strong><small>{ageStatusCopy[stage]}</small></div>
+                <div>
+                  <strong>{stage}</strong>
+                  <small>{ageStatusCopy[stage]}</small>
+                </div>
               </li>
             ))}
           </ol>
           <div className="age-detail-guidance">
             <strong>Hướng dẫn</strong>
-            <p>{ageStatusCopy[request.status]}</p>
+            <p>
+              {request.status === "ISSUED" && request.walletReceived
+                ? "Thông tin xác minh đã được lưu trong Ví. Hiệu lực vẫn được kiểm tra lại khi bạn sử dụng tại checkout."
+                : ageStatusCopy[request.status]}
+            </p>
           </div>
           <div className="age-detail-actions">
-            {request.status === "PENDING" && !request.recordSubmitted && <a className="button" href={issuerPortalOrigin()+"/submit-age/"+encodeURIComponent(request.id)}>Tiếp tục cung cấp hồ sơ</a>}
-            {!terminalAgeStatus(request.status) && <button className="button secondary" disabled={busy} onClick={() => void refresh()}>{busy ? "Đang cập nhật…" : "Cập nhật trạng thái"}</button>}
-            {request.status === "ISSUED" && <a className="button" href={issuerReceiveUrl(issuerPortalOrigin(), request.id)}>Tiếp tục nhận tại Issuer</a>}
-            <Link className="text-link" to="/tai-khoan">Quay lại tài khoản</Link>
+            {request.status === "PENDING" && !request.recordSubmitted && (
+              <a
+                className="button"
+                href={
+                  issuerPortalOrigin() +
+                  "/submit-age/" +
+                  encodeURIComponent(request.id)
+                }
+              >
+                Tiếp tục cung cấp hồ sơ
+              </a>
+            )}
+            {!terminalAgeStatus(request.status) && (
+              <BusyButton
+                className="button secondary"
+                busy={busy}
+                busyLabel="Đang cập nhật…"
+                disabled={busy}
+                onClick={() => void refresh()}
+              >
+                Cập nhật trạng thái
+              </BusyButton>
+            )}
+            {request.status === "ISSUED" && !request.walletReceived && (
+              <a
+                className="button"
+                href={issuerReceiveUrl(issuerPortalOrigin(), request.id)}
+              >
+                Tiếp tục nhận tại Issuer
+              </a>
+            )}
+            <Link className="text-link" to="/tai-khoan">
+              Quay lại tài khoản
+            </Link>
           </div>
         </div>
       )}
@@ -1396,41 +1841,30 @@ function Account({ user }: { user: User | null }) {
             </p>
           )}
           {message && <Notice>{message}</Notice>}
-          <label>
-            Mật khẩu hiện tại
-            <input
+          <PasswordField label="Mật khẩu hiện tại"
               name="currentPassword"
-              type="password"
               required
+              maxLength={128}
               autoComplete="current-password"
             />
-          </label>
-          <label>
-            Mật khẩu mới
-            <input
+          <PasswordField label="Mật khẩu mới"
               name="newPassword"
-              type="password"
               required
               minLength={10}
               maxLength={128}
               autoComplete="new-password"
             />
-          </label>
-          <label>
-            Nhập lại mật khẩu mới
-            <input
+          <PasswordField label="Nhập lại mật khẩu mới"
               name="confirmPassword"
-              type="password"
               required
               minLength={10}
               maxLength={128}
               autoComplete="new-password"
             />
-          </label>
-          <button className="button full" disabled={busy}>
+          <BusyButton className="button full" busy={busy} busyLabel="Đang cập nhật…" disabled={busy}>
             <LockKeyhole size={17} />
-            {busy ? "Đang cập nhật…" : "Cập nhật mật khẩu"}
-          </button>
+            Cập nhật mật khẩu
+          </BusyButton>
         </form>
       </div>
       <CredentialRequestPanel />
@@ -1438,6 +1872,7 @@ function Account({ user }: { user: User | null }) {
   );
 }
 function Addresses({ user }: { user: User | null }) {
+  const confirmAction = useConfirmation();
   const { data, error, reload } = useData<Address[]>("/me/addresses");
   const [edit, setEdit] = useState<Address | null>(null),
     [err, setErr] = useState(""),
@@ -1488,7 +1923,12 @@ function Addresses({ user }: { user: User | null }) {
               <button
                 className="text-button danger"
                 onClick={async () => {
-                  if (!confirm(`Xóa địa chỉ của ${a.name}?`)) return;
+                  if (
+                    !(await confirmAction({
+                      title: `Xóa địa chỉ của ${a.name}?`,
+                    }))
+                  )
+                    return;
                   try {
                     await api("/me/addresses/" + a.id, "DELETE");
                     reload();
@@ -1577,13 +2017,14 @@ function Orders({
   user: User | null;
   detail?: boolean;
 }) {
+  const confirmAction = useConfirmation();
   const { id } = useParams(),
     { data, error, reload } = useData<any>(
       detail ? "/me/orders/" + id : "/me/orders",
     );
   const [err, setErr] = useState("");
   if (!user) return <AuthPrompt />;
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} retry={reload} />;
   const list: Order[] = detail ? [data] : data;
   return (
     <section className="section">
@@ -1664,7 +2105,8 @@ function Orders({
                 <button
                   className="text-button danger"
                   onClick={async () => {
-                    if (!confirm("Hủy đơn hàng này?")) return;
+                    if (!(await confirmAction({ title: "Hủy đơn hàng này?" })))
+                      return;
                     try {
                       await api("/me/orders/" + o.id + "/cancel", "POST", {});
                       reload();
@@ -1684,7 +2126,12 @@ function Orders({
   );
 }
 function Admin({ user }: { user: User | null }) {
-  const [tab, setTab] = useState(()=>new URLSearchParams(window.location.search).get("tab")==="lots"?"lots":"products"),
+  const confirmAction = useConfirmation();
+  const [tab, setTab] = useState(() =>
+      new URLSearchParams(window.location.search).get("tab") === "lots"
+        ? "lots"
+        : "products",
+    ),
     [edit, setEdit] = useState<any>(null),
     [err, setErr] = useState(""),
     [message, setMessage] = useState(""),
@@ -1770,7 +2217,11 @@ function Admin({ user }: { user: User | null }) {
       <div className="section-heading">
         <h1 className="page-title">Chăm chút cửa hàng</h1>
         {tab !== "orders" && tab !== "users" && (
-          <button className="button" disabled={busy} onClick={() => setEdit({})}>
+          <button
+            className="button"
+            disabled={busy}
+            onClick={() => setEdit({})}
+          >
             <Plus size={16} /> Thêm mới
           </button>
         )}
@@ -2050,9 +2501,9 @@ function Admin({ user }: { user: User | null }) {
                   ? "Đơn hàng"
                   : tab === "users"
                     ? "Người dùng"
-                  : tab === "lots"
-                    ? "Mã lô"
-                    : "Tên"}
+                    : tab === "lots"
+                      ? "Mã lô"
+                      : "Tên"}
               </th>
               <th>Thông tin</th>
               <th>Thao tác</th>
@@ -2063,7 +2514,9 @@ function Admin({ user }: { user: User | null }) {
               <tr key={r.id}>
                 <td>
                   <strong>
-                    {tab === "users" ? displayName(r.name) : r.name || r.lotCode || r.code}
+                    {tab === "users"
+                      ? displayName(r.name)
+                      : r.name || r.lotCode || r.code}
                   </strong>
                   <small>
                     {r.slug || r.product?.name || r.user?.email || r.email}
@@ -2099,7 +2552,8 @@ function Admin({ user }: { user: User | null }) {
                       {r.role === "ADMIN" ? "Quản trị viên" : "Khách hàng"}
                       <small>
                         {r._count.addresses} địa chỉ · {r._count.orders} đơn ·
-                        tham gia {new Date(r.createdAt).toLocaleDateString("vi-VN")}
+                        tham gia{" "}
+                        {new Date(r.createdAt).toLocaleDateString("vi-VN")}
                       </small>
                     </>
                   ) : (
@@ -2154,7 +2608,14 @@ function Admin({ user }: { user: User | null }) {
                         className="text-button danger"
                         disabled={busy}
                         onClick={async () => {
-                          if (!confirm("Xóa/lưu trữ mục này?")) return;
+                          if (
+                            !(await confirmAction({
+                              title: "Xóa hoặc lưu trữ mục này?",
+                              description:
+                                "Kiểm tra mục đã chọn trước khi xác nhận.",
+                            }))
+                          )
+                            return;
                           setBusy(true);
                           setErr("");
                           try {
@@ -2176,7 +2637,7 @@ function Admin({ user }: { user: User | null }) {
                       </button>
                       {tab === "lots" && (
                         <>
-                          <LotRequestAction lotId={r.id}/>
+                          <LotRequestAction lotId={r.id} />
                           <label
                             className={
                               "text-button proof-import " +
@@ -2219,17 +2680,16 @@ function Admin({ user }: { user: User | null }) {
                               className="text-button danger"
                               disabled={busy}
                               onClick={async () => {
-                                if (
-                                  !confirm(
-                                    "Thu hồi thông tin xác minh của lô này? Kết quả cũ sẽ không còn được công nhận.",
-                                  )
-                                )
-                                  return;
+                                const reason = await confirmAction({
+                                  title: "Thu hồi thông tin xác minh lô?",
+                                  description:
+                                    "Kết quả cũ sẽ không còn được công nhận.",
+                                  reason: true,
+                                });
+                                if (!reason) return;
                                 setBusy(true);
                                 setErr("");
                                 try {
-                                  const reason = prompt("Lý do thu hồi credential lô:");
-                                  if (!reason) return;
                                   await api(
                                     "/admin/lots/" + r.id + "/revoke",
                                     "POST",
@@ -2267,7 +2727,10 @@ function Admin({ user }: { user: User | null }) {
         </table>
       </div>
       {rows.length > adminPageSize && (
-        <nav className="admin-pagination" aria-label="Phân trang dữ liệu quản trị">
+        <nav
+          className="admin-pagination"
+          aria-label="Phân trang dữ liệu quản trị"
+        >
           <button
             type="button"
             className="text-button"
@@ -2294,9 +2757,16 @@ function Admin({ user }: { user: User | null }) {
     </section>
   );
 }
-function NotFound(){return <div className="empty"><h1>Không tìm thấy trang</h1><Link to="/">Về cửa hàng</Link></div>;}
-export default function App() {
-  const [sessionReady,setSessionReady]=useState(false);
+function NotFound() {
+  return (
+    <div className="empty">
+      <h1>Không tìm thấy trang</h1>
+      <Link to="/">Về cửa hàng</Link>
+    </div>
+  );
+}
+function AppContent() {
+  const [sessionReady, setSessionReady] = useState(false);
   const [user, setUser] = useState<User | null>(null),
     [count, setCount] = useState(0),
     [toast, setToast] = useState(""),
@@ -2304,14 +2774,14 @@ export default function App() {
     [scrolled, setScrolled] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const activeParams = new URLSearchParams(location.search);
-  const activeCategory =
-    activeParams.get("category") || activeParams.get("danh-muc");
-  const giftsActive =
-    location.pathname === "/gifts" ||
-    (location.pathname === "/" && activeCategory === "qua-tang");
-  const shopActive = location.pathname === "/" && !giftsActive;
+  const activeTab = storefrontTab(
+    location.pathname,
+    location.search,
+    location.hash,
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addingProducts = useRef(new Set<string>());
+  useEffect(() => { setMenu(false); }, [location.pathname, location.search]);
   function notify(s: string) {
     setToast(s);
     if (timer.current) clearTimeout(timer.current);
@@ -2329,7 +2799,7 @@ export default function App() {
         if (r.user) refreshCount();
       })
       .catch(() => {})
-      .finally(()=>setSessionReady(true));
+      .finally(() => setSessionReady(true));
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
@@ -2350,15 +2820,19 @@ export default function App() {
   async function add(id: string, quantity = 1) {
     if (!user) {
       notify("Đăng nhập để lưu giỏ hàng của bạn");
-      navigate("/dang-nhap");
+      navigate("/dang-nhap?returnUrl=" + encodeURIComponent(location.pathname + location.search + location.hash));
       return;
     }
+    if (addingProducts.current.has(id)) return;
+    addingProducts.current.add(id);
     try {
       await api("/cart/items", "POST", { productId: id, quantity });
       refreshCount();
       notify("Đã thêm thức quà vào giỏ hàng");
     } catch (e) {
       notify((e as Error).message);
+    } finally {
+      addingProducts.current.delete(id);
     }
   }
   function signed(u: User) {
@@ -2372,7 +2846,8 @@ export default function App() {
       </a>
       <ScrollToTop />
       <div className="announcement">
-        ĐẶC SẢN VÀ QUÀ TẶNG VIỆT <span>Miễn phí giao hàng · Thanh toán COD</span>
+        ĐẶC SẢN VÀ QUÀ TẶNG VIỆT{" "}
+        <span>Miễn phí giao hàng · Thanh toán COD</span>
       </div>
       <header className={scrolled ? "scrolled" : ""}>
         <div className="header-inner">
@@ -2382,22 +2857,23 @@ export default function App() {
               Bản Vị Việt<small>THỨC QUÀ TỪ ĐẤT VIỆT</small>
             </span>
           </Link>
-          <nav className={menu ? "open" : ""}>
-            <NavLink
-              to="/"
-              end
-              className={shopActive ? "active" : undefined}
-              onClick={() => setMenu(false)}
-            >
-              Cửa hàng
-            </NavLink>
-            <NavLink
-              to="/gifts?category=qua-tang#thuc-qua"
-              className={giftsActive ? "active" : undefined}
-              onClick={() => setMenu(false)}
-            >
-              Quà tặng
-            </NavLink>
+          <nav id="store-navigation" className={menu ? "open" : ""} aria-label="Điều hướng chính">
+            {[
+              ["home", "/", "Trang chủ"],
+              ["shop", "/cua-hang#thuc-qua", "Cửa hàng"],
+              ["gifts", "/gifts?category=qua-tang#thuc-qua", "Quà tặng"],
+              ["about", "/gioi-thieu", "Giới thiệu"],
+            ].map(([tab, path, label]) => (
+              <Link
+                key={tab}
+                to={path}
+                className={activeTab === tab ? "active" : ""}
+                aria-current={activeTab === tab ? "page" : undefined}
+                onClick={() => setMenu(false)}
+              >
+                {label}
+              </Link>
+            ))}
             {user && (
               <>
                 <NavLink to="/don-hang" onClick={() => setMenu(false)}>
@@ -2461,6 +2937,7 @@ export default function App() {
               className="icon mobile-toggle"
               aria-label={menu ? "Đóng menu" : "Mở menu"}
               aria-expanded={menu}
+              aria-controls="store-navigation"
               onClick={() => setMenu(!menu)}
             >
               {menu ? <X /> : <Menu />}
@@ -2475,6 +2952,8 @@ export default function App() {
       <main id="main">
         <Routes>
           <Route path="/" element={<Home onAdd={add} />} />
+          <Route path="/cua-hang" element={<Home onAdd={add} />} />
+          <Route path="/gioi-thieu" element={<AboutPage />} />
           <Route path="/gifts" element={<Home onAdd={add} />} />
           <Route path="/san-pham/:slug" element={<ProductPage onAdd={add} />} />
           <Route
@@ -2494,14 +2973,35 @@ export default function App() {
           <Route path="/dia-chi" element={<Addresses user={user} />} />
           <Route path="/don-hang" element={<Orders user={user} />} />
           <Route path="/don-hang/:id" element={<Orders user={user} detail />} />
-          <Route path="/quan-tri" element={!sessionReady?<div role="status">Đang kiểm tra phiên…</div>:!user?<Navigate to="/login?returnUrl=%2Fquan-tri" replace/>:user.role==="ADMIN"?<Admin user={user}/>:<NotFound/>} />
-          <Route path="/admin" element={!sessionReady?<div role="status">Đang kiểm tra phiên…</div>:!user?<Navigate to="/login?returnUrl=%2Fadmin" replace/>:user.role==="ADMIN"?<Admin user={user}/>:<NotFound/>} />
           <Route
-            path="*"
+            path="/quan-tri"
             element={
-              <NotFound/>
+              !sessionReady ? (
+                <div role="status">Đang kiểm tra phiên…</div>
+              ) : !user ? (
+                <Navigate to="/login?returnUrl=%2Fquan-tri" replace />
+              ) : user.role === "ADMIN" ? (
+                <Admin user={user} />
+              ) : (
+                <NotFound />
+              )
             }
           />
+          <Route
+            path="/admin"
+            element={
+              !sessionReady ? (
+                <div role="status">Đang kiểm tra phiên…</div>
+              ) : !user ? (
+                <Navigate to="/login?returnUrl=%2Fadmin" replace />
+              ) : user.role === "ADMIN" ? (
+                <Admin user={user} />
+              ) : (
+                <NotFound />
+              )
+            }
+          />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
       <footer>
@@ -2519,8 +3019,8 @@ export default function App() {
           </p>
         </div>
         <div>
-          <strong>Ghé thăm cửa hàng</strong>
-          <Link to="/#thuc-qua">Tất cả thức quà</Link>
+          <strong>Mua sắm</strong>
+          <Link to="/cua-hang#thuc-qua">Tất cả thức quà</Link>
           <Link to="/gifts?category=qua-tang#thuc-qua">Quà tặng Việt</Link>
           <Link
             to={
@@ -2533,17 +3033,25 @@ export default function App() {
           </Link>
         </div>
         <div>
-          <strong>Liên hệ với chúng tôi</strong>
+          <strong>Hỗ trợ khách hàng</strong>
+          <Link to="/tai-khoan">Tài khoản của bạn</Link>
+          <Link to="/dia-chi">Địa chỉ nhận hàng</Link>
+          <Link to="/gioi-thieu#lien-he">Liên hệ & hỗ trợ</Link>
           <p className="footer-contact">
-            <a href="mailto:hello@banviviet.vn">
-              <Mail size={14} /> hello@banviviet.vn
+            <a href="mailto:hello@banviviet.example">
+              <Mail size={14} /> hello@banviviet.example
             </a>
             <br />
-            <a href="tel:+842873002026">
-              <Phone size={14} /> 028 7300 2026
-            </a>
-            <br /> Thứ Hai – Thứ Bảy, 08:00–18:00
+            Thông tin liên hệ hư cấu của đồ án
           </p>
+        </div>
+        <div>
+          <strong>Về Bản Vị Việt</strong>
+          <Link to="/gioi-thieu">Câu chuyện thương hiệu</Link>
+          <strong className="footer-policy-title">Chính sách</strong>
+          <Link to="/gioi-thieu#quyen-rieng-tu">Quyền riêng tư</Link>
+          <Link to="/gioi-thieu#giao-hang">Giao hàng & thanh toán</Link>
+          <Link to="/gioi-thieu#thong-tin-san-pham">Thông tin sản phẩm</Link>
         </div>
         <div className="footer-bottom">
           <span>© 2026 Bản Vị Việt</span>
@@ -2564,5 +3072,12 @@ export default function App() {
         </div>
       )}
     </>
+  );
+}
+export default function App() {
+  return (
+    <ConfirmationProvider>
+      <AppContent />
+    </ConfirmationProvider>
   );
 }

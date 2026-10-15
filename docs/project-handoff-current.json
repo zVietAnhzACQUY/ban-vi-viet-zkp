@@ -1,0 +1,117 @@
+{
+  "generatedAt": "2026-10-14T19:37:50.4503520+07:00",
+  "gitCommit": {
+    "full": "0cd6d9f43dea55e5451ae4dccae9fcc8c69c24b8",
+    "short": "0cd6d9f",
+    "subject": "Redesign user-controlled ZKP wallet interface"
+  },
+  "gitStatus": {
+    "clean": false,
+    "preHandoffModified": 45,
+    "preHandoffUntracked": 19,
+    "preHandoffTotal": 64,
+    "note": "Working tree contained owner/prior-session changes before these two handoff files were added; do not reset or overwrite them.",
+    "risks": [
+      "Four tracked Prisma query-engine binaries, including three .tmp variants, are approximately 20.13 MB each and require owner review.",
+      "Current test/build outputs are not a substitute for committing or reviewing the dirty tree."
+    ]
+  },
+  "components": [
+    { "name": "website", "path": "apps/web", "port": 5173, "role": "commerce relying party" },
+    { "name": "wallet", "path": "apps/wallet", "port": 5174, "role": "encrypted AGE credential storage and proving" },
+    { "name": "issuerPortal", "path": "apps/issuer-portal", "port": 5175, "role": "issuer operator and customer handoff routes" },
+    { "name": "api", "path": "apps/api", "port": 3001, "role": "commerce, auth, AGE and LOT verification API" },
+    { "name": "delivery", "path": "apps/issuer", "port": 3002, "role": "AGE claim delivery and evidence service" },
+    { "name": "postgres", "path": "prisma", "port": 5434, "role": "Prisma source-of-truth database" },
+    { "name": "ageIssuerCli", "path": "apps/issuer/issue-age.ts", "port": null, "role": "external-key AGE issuance" },
+    { "name": "lotIssuerCli", "path": "apps/issuer/issue-lot.ts", "port": null, "role": "external-key LOT issuance" },
+    { "name": "lotProver", "path": "apps/prover", "port": null, "role": "local private credential to public bundle" },
+    { "name": "circuits", "path": "circuits", "port": null, "role": "Groth16 BN254 AGE and LOT circuits" }
+  ],
+  "ports": {
+    "api": 3001,
+    "delivery": 3002,
+    "website": 5173,
+    "wallet": 5174,
+    "issuerPortal": 5175,
+    "postgresHost": 5434,
+    "observedListeningAtGeneration": []
+  },
+  "migrations": {
+    "sourceCount": 11,
+    "ordered": [
+      "202609280001_g2",
+      "202609280002_g3_age",
+      "202609280003_g3_issuer_binding",
+      "202609280004_g4_lot",
+      "202610040001_pilot_issuer_lifecycle",
+      "202610040002_pilot_age_status_values",
+      "202610040003_pilot_lifecycle_consistency",
+      "202610050001_age_credential_delivery",
+      "202610070001_age_verification_evidence",
+      "202610070002_issuer_operator_role",
+      "202610070003_lot_request_evidence"
+    ],
+    "historicalReport": "docs/lot-request-evidence-2026-10-07.md reports public and g2_test_20261007 at 11 finished, zero failed/rolled back, no drift.",
+    "currentStatus": "UNVERIFIED_DATABASE_UNREACHABLE",
+    "currentTestSchemaExpected": "g2_test_20261007",
+    "protectedLegacySchemas": ["g2_test", "g2_test_20261005"]
+  },
+  "testStatus": {
+    "prismaValidate": { "status": "PASS", "details": "schema valid" },
+    "prismaMigrateStatus": { "status": "BLOCKED", "details": "PostgreSQL 127.0.0.1:5434 was not listening; schema engine error" },
+    "applicationTestRunner": { "status": "FAIL_ENVIRONMENT", "details": "4/4 non-DB login tests passed, then runner could not connect to g2_test_20261007; no current full-suite count" },
+    "websiteBuild": { "status": "PASS", "details": "Vite warning for large chunks" },
+    "walletBuild": { "status": "PASS", "details": "Vite warning for large chunks" },
+    "issuerPortalBuild": { "status": "PASS_WITH_REQUIRED_CONFIG", "details": "Default build failed closed without WEBSITE_ORIGIN; passed when explicit local WEBSITE_ORIGIN was supplied" },
+    "typescript": { "status": "PASS", "details": "npx tsc --noEmit" },
+    "g1StaticPreservation": { "status": "PASS", "details": "45/45 immutable paths matched; dynamic artifacts/evidence/witness-tests.json excluded" },
+    "witnessOwnerVerification": { "status": "NOT_RUN", "details": "owner/private harness intentionally not run" },
+    "browserSmoke": { "status": "NOT_RUN", "details": "no local service ports were listening" },
+    "ageOwnerE2E": { "status": "PENDING_OWNER" },
+    "lotOwnerE2E": { "status": "PENDING_OWNER" },
+    "deployE2E": { "status": "PENDING" }
+  },
+  "completed": [
+    "AGE and LOT circuits and pinned G1 artifacts",
+    "Website commerce source",
+    "Wallet source with encrypted AGE credential and worker proving",
+    "Issuer Portal source and role boundary",
+    "Credential Delivery and AGE/LOT evidence source",
+    "AGE and LOT issuance CLI source",
+    "AGE and LOT backend verification source",
+    "Eleven cumulative migration files"
+  ],
+  "pending": [
+    "Owner review and freeze of dirty working tree",
+    "Current public and test migration status/drift verification",
+    "Full DB-backed test suite",
+    "Local Browser AGE and LOT E2E with fictional data and owner-operated keys",
+    "Deployment and post-deploy E2E",
+    "Final report, appendix, slide deck and demo video"
+  ],
+  "blockers": [
+    "PostgreSQL is not listening on 127.0.0.1:5434, blocking migrate status/drift and DB-backed tests.",
+    "Working tree is heavily dirty and must be reviewed before freezing a release.",
+    "Owner-held AGE/LOT private keys and credentials are intentionally unavailable to this handoff, so owner Browser E2E remains pending."
+  ],
+  "criticalConstraints": [
+    "Do not reset, drop, truncate, delete, blindly resolve migrations or remove Docker volumes.",
+    "Do not overwrite owner changes or edit already-applied migrations.",
+    "Do not read, print, log or commit passwords, tokens, private keys, private credentials, evidence plaintext, PIN, DOB, salt, holderSecret, witness or IndexedDB contents.",
+    "Do not change circuits, public signal order, trusted setup, zkey, verification key, issuer public binding or G1 artifacts without explicit owner scope.",
+    "Website remains a relying party and must not receive private AGE credential data.",
+    "Private signing keys remain external and CLI-only.",
+    "This is an internal pilot, not production-ready."
+  ],
+  "nextRecommendedTask": {
+    "order": 1,
+    "title": "Restore and verify the local database checkpoint without mutation",
+    "steps": [
+      "Start the existing PostgreSQL container without deleting volumes.",
+      "Verify TEST_DATABASE_URL resolves to current_schema() g2_test_20261007 without printing credentials.",
+      "Run Prisma migrate status for public/test and a safe drift check, then execute the full application test runner.",
+      "If clean, review the dirty Git tree and prepare owner-controlled release freeze before Browser E2E."
+    ]
+  }
+}

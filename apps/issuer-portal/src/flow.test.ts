@@ -9,6 +9,7 @@ import {
   safePortalPath,
   websiteDetailUrl,
 } from "./flow";
+import { isAllowedEvidenceMime } from "./evidence-preview";
 
 const requestId = "11111111-1111-4111-8111-111111111111";
 
@@ -84,4 +85,25 @@ test("Portal UI has no internal disclaimers or browser prompts", () => {
   assert.match(portal, /user\?\.role !== "CUSTOMER"/);
   assert.match(portal, /role="dialog"/);
   assert.match(portal, /recordChecked: true/);
+});
+
+test("AGE and LOT share a Blob preview with a strict MIME allowlist and cleanup", () => {
+  assert.equal(isAllowedEvidenceMime("application/pdf"), true);
+  assert.equal(isAllowedEvidenceMime("image/jpeg"), true);
+  assert.equal(isAllowedEvidenceMime("image/png"), true);
+  for (const mime of ["image/svg+xml", "text/html", "application/octet-stream"])
+    assert.equal(isAllowedEvidenceMime(mime), false);
+  const preview = readFileSync(new URL("./evidence-preview.tsx", import.meta.url), "utf8");
+  const age = readFileSync(new URL("./evidence.tsx", import.meta.url), "utf8");
+  const lot = readFileSync(new URL("./lot.tsx", import.meta.url), "utf8");
+  assert.match(preview, /responseMime !== expectedMime\.toLowerCase\(\)/);
+  assert.match(preview, /URL\.createObjectURL\(blob\)/);
+  assert.match(preview, /URL\.revokeObjectURL/);
+  assert.match(preview, /<object data=\{url\} type="application\/pdf"/);
+  assert.match(preview, /<img src=\{url\}/);
+  assert.match(preview, /Mở trong tab mới/);
+  assert.doesNotMatch(preview, /base64|localStorage|sessionStorage|indexedDB|sandbox=/i);
+  assert.match(age, /<EvidencePreview/);
+  assert.match(lot, /<EvidencePreview/);
+  assert.match(lot, /disabled=\{!evidenceLoaded\}/);
 });

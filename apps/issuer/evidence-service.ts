@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { fail } from "../api/src/commerce.js";
 import { MAX_EVIDENCE_BYTES, inspectEvidence, saveEvidence, openEvidence, removeEvidence, type EvidenceStorage } from "./evidence-storage.js";
+const PREVIEW_MIME = new Set(["application/pdf", "image/jpeg", "image/png"]);
 export async function registerEvidence(app:FastifyInstance,db:PrismaClient,storage:EvidenceStorage) {
   app.addContentTypeParser("application/octet-stream",{parseAs:"buffer",bodyLimit:MAX_EVIDENCE_BYTES},(_req,body,done)=>done(null,body));
   const requestId=(req:any)=>z.string().uuid().parse(req.params.id);
@@ -48,6 +49,7 @@ export async function registerEvidence(app:FastifyInstance,db:PrismaClient,stora
       await tx.$queryRaw`SELECT id FROM "AgeCredentialRequest" WHERE id=${id}::uuid FOR UPDATE`;
       const evidence=await tx.ageVerificationEvidence.findFirst({where:{requestId:id,deletedAt:null}});
       if(!evidence) fail("NOT_FOUND","Không có hồ sơ đang hoạt động.",404);
+      if(!PREVIEW_MIME.has(evidence.detectedMimeType)) fail("INVALID_FILE","Định dạng hồ sơ không được phép xem.",415);
       return {bytes:await openEvidence(storage,evidence.storageKey),mime:evidence.detectedMimeType};
     });
     return reply.header("Cache-Control","no-store").header("Content-Disposition",'attachment; filename="fictional-age-record"').type(data.mime).send(Readable.from([data.bytes]));

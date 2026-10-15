@@ -241,6 +241,43 @@ try {
       },
     );
 
+    await t.test("lost verify response is recoverable for the current cart", async () => {
+      const fixture = await prepared();
+      const accepted = await fixture.c.request("POST", "/age/verifications", fixture.bundle);
+      assert.equal(accepted.statusCode, 200, accepted.body);
+      const recovered = await fixture.c.request("GET", "/age/verifications/current");
+      assert.equal(recovered.statusCode, 200, recovered.body);
+      assert.equal(recovered.json().status, "VERIFIED");
+      assert.equal(recovered.json().verificationId, accepted.json().verificationId);
+      assert.equal(recovered.json().challengeId, fixture.challenge.id);
+      for (const secret of ["proof", "publicSignals", "credential", "nullifier", "holderSecret", "salt", "witness"])
+        assert.equal(recovered.body.includes(secret), false);
+      const retried = await fixture.c.request("POST", "/age/verifications", fixture.bundle);
+      assert.equal(retried.statusCode, 200, retried.body);
+      assert.equal(retried.json().verificationId, accepted.json().verificationId);
+      assert.equal(await db.ageVerification.count({ where: { challengeId: fixture.challenge.id } }), 1);
+    });
+
+    await t.test("recovery rejects changed cart, expired and consumed verification", async () => {
+      const changed = await prepared();
+      await verifyAge(changed);
+      await add(changed.c, changed.product.id);
+      assert.equal((await changed.c.request("GET", "/age/verifications/current")).body, "null");
+
+      const expired = await prepared();
+      const expiredResult = await verifyAge(expired);
+      await db.ageVerification.update({ where: { id: expiredResult.verificationId }, data: { expiresAt: new Date(Date.now() - 1) } });
+      assert.equal((await expired.c.request("GET", "/age/verifications/current")).body, "null");
+
+      const consumed = await prepared();
+      const consumedResult = await verifyAge(consumed);
+      await db.$transaction([
+        db.ageVerification.update({ where: { id: consumedResult.verificationId }, data: { consumedAt: new Date() } }),
+        db.ageChallenge.update({ where: { id: consumed.challenge.id }, data: { status: "CONSUMED", consumedAt: new Date() } }),
+      ]);
+      assert.equal((await consumed.c.request("GET", "/age/verifications/current")).body, "null");
+    });
+
     await t.test("underage witness cannot produce a proof", async () => {
       const c = await client();
       const product = await ageProduct();
@@ -528,13 +565,14 @@ try {
         assert.equal(wrong.json().code, "PUBLIC_SIGNALS_INVALID");
 
         const replay = await prepared();
-        await verifyAge(replay);
+        const first = await verifyAge(replay);
         const replayed = await replay.c.request(
           "POST",
           "/age/verifications",
           replay.bundle,
         );
-        assert.equal(replayed.json().code, "CHALLENGE_REPLAY");
+        assert.equal(replayed.statusCode, 200, replayed.body);
+        assert.equal(replayed.json().verificationId, first.verificationId);
 
         const leaked = structuredClone((await prepared()).bundle) as any;
         leaked.credential.privateInputs = {

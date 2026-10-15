@@ -95,11 +95,33 @@ try {
       assert.equal(commerceCannotCreateClaim.statusCode, 403);
       clock = new Date(clock.getTime()+CLAIM_TTL_MS+1);
       assert.equal((await post(walletOrigin, f.owner.raw, "/issuer/age/claims/redeem", { token })).statusCode, 410);
-      clock = new Date();
       const fresh = await post(portalOrigin, f.owner.raw, "/issuer/age/claims", { requestId: f.request.id });
       const freshToken = new URL(fresh.json().claimUrl).searchParams.get("claim")!;
       await db.ageCredentialRequest.update({ where:{id:f.request.id}, data:{status:"REVOKED", revokedAt:clock, revocationReason:"test"} });
       assert.equal((await post(walletOrigin, f.owner.raw, "/issuer/age/claims/redeem", { token:freshToken })).statusCode, 409);
+    });
+
+    await t.test("concurrent claim creation leaves at most one active token", async () => {
+      const f = await fixture();
+      const created = await Promise.all(Array.from({ length: 6 }, () =>
+        post(portalOrigin, f.owner.raw, "/issuer/age/claims", { requestId: f.request.id }),
+      ));
+      assert.equal(created.filter(response => response.statusCode === 200).length, 1);
+      assert(created.filter(response => response.statusCode === 409).every(response => response.json().code === "CLAIM_ALREADY_ACTIVE"));
+      assert.equal(await db.ageCredentialClaim.count({ where: {
+        requestId: f.request.id, userId: f.owner.user.id,
+        credentialId: f.credentialId, status: "ACTIVE", expiresAt: { gt: clock },
+      }}), 1);
+      const tokens = created.filter(response => response.statusCode === 200).map(response => new URL(response.json().claimUrl).searchParams.get("claim")!);
+      const redeemed = await Promise.all(tokens.map(token =>
+        post(walletOrigin, f.owner.raw, "/issuer/age/claims/redeem", { token }),
+      ));
+      assert.equal(redeemed.filter(response => response.statusCode === 200).length, 1);
+      const activeToken = tokens[redeemed.findIndex(response => response.statusCode === 200)];
+      assert.equal((await post(walletOrigin, f.owner.raw, "/issuer/age/claims/ack", { token: activeToken })).statusCode, 200);
+      const repeated = await post(portalOrigin, f.owner.raw, "/issuer/age/claims", { requestId: f.request.id });
+      assert.equal(repeated.statusCode, 409);
+      assert.equal(repeated.json().code, "CREDENTIAL_ALREADY_CLAIMED");
     });
   });
 } finally {

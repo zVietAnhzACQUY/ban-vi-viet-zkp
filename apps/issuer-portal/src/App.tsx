@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { BusyButton } from "../../shared/BusyButton";
 import { Link, Navigate, Route, Routes, useNavigate, useParams, useLocation } from "react-router-dom";
 import { ShieldCheck, ArrowRight, ArrowLeft, LogOut, RefreshCw, Eye, EyeOff, Search, LoaderCircle, Inbox, CheckCircle2, AlertCircle } from "lucide-react";
 import { api, claimCredential, websiteOrigin, type AgeRequestStatus, type OperatorAgeRequest, type User } from "./api";
@@ -50,7 +51,7 @@ function Login({ user, onUser }: { user: User | null; onUser: (user: User) => vo
     <div className="login-form"><span className="eyebrow">Credential Issuer</span><h1>Đăng nhập dành cho nhân viên vận hành</h1><p>Đăng nhập để tiếp nhận và xử lý các yêu cầu xác minh thông tin.</p>
       <form onSubmit={submit}><label>Email<input name="email" type="email" required autoComplete="username" placeholder="Nhập email của bạn" disabled={loading} /></label>
         <label>Mật khẩu<span className="password-field"><input name="password" type={visible ? "text" : "password"} required autoComplete="current-password" placeholder="Nhập mật khẩu" disabled={loading} /><button type="button" className="icon-button" aria-label={visible ? "Ẩn mật khẩu" : "Hiện mật khẩu"} onClick={() => setVisible(!visible)}>{visible ? <EyeOff size={19} /> : <Eye size={19} />}</button></span></label>
-        <ErrorMessage message={error} /><button className="primary full" disabled={loading}>{loading ? <><Spinner /> Đang đăng nhập…</> : <>Đăng nhập <ArrowRight size={18} /></>}</button>
+        <ErrorMessage message={error} /><BusyButton className="primary full" busy={loading} busyLabel="Đang đăng nhập…" disabled={loading}>Đăng nhập <ArrowRight size={18} /></BusyButton>
       </form>
     </div>
   </section>;
@@ -91,7 +92,7 @@ function ReceiveAge({ user }: { user: User | null }) {
     {user?.role !== "CUSTOMER" ? <><ErrorMessage message="Phiên tài khoản không hợp lệ để nhận thông tin xác minh." /><p>Vui lòng quay lại Bản Vị Việt để đăng nhập bằng tài khoản đã gửi yêu cầu, sau đó thực hiện lại.</p></> : <>
       {loading && <div className="loading"><Spinner /> Đang kiểm tra yêu cầu…</div>}<ErrorMessage message={error} />
       {request && <><dl className="meta"><div><dt>Mã yêu cầu</dt><dd>{shortId(request.id)}</dd></div><div><dt>Trạng thái</dt><dd><Badge status={request.status} /></dd></div></dl>
-        {canReceiveCredential(request.status) ? <><p>Thông tin xác minh đã sẵn sàng. Mở Ví và sử dụng PIN để nhận, kiểm tra và lưu an toàn trên thiết bị.</p><button className="primary full" disabled={busy} onClick={() => void receive()}>{busy ? <><Spinner /> Đang chuyển tới Ví…</> : <>Tiếp tục tới Ví <ArrowRight size={18} /></>}</button></> : <ErrorMessage message="Thông tin xác minh chưa sẵn sàng hoặc không còn hiệu lực. Vui lòng kiểm tra trạng thái yêu cầu tại Website." />}</>}
+        {request.status === "ISSUED" && request.walletReceived ? <div className="feedback success" role="status"><CheckCircle2 size={18} />Credential đã được nhận vào Ví.</div> : canReceiveCredential(request.status) ? <><p>Thông tin xác minh đã sẵn sàng. Mở Ví và dùng mã khóa Ví để nhận, kiểm tra và lưu an toàn trên thiết bị.</p><button className="primary full" disabled={busy} onClick={() => void receive()}>{busy ? <><Spinner /> Đang chuyển tới Ví…</> : <>Tiếp tục tới Ví <ArrowRight size={18} /></>}</button></> : <ErrorMessage message="Thông tin xác minh chưa sẵn sàng hoặc không còn hiệu lực. Vui lòng kiểm tra trạng thái yêu cầu tại Website." />}</>}
     </>}<a className="back-link" href={back.url}><ArrowLeft size={16} /> {back.label}</a>
   </section>;
 }
@@ -108,6 +109,7 @@ function Operator({ user }: { user: User }) {
   const [checked, setChecked] = useState(false);
   const [checklist, setChecklist] = useState<boolean[]>([false,false,false,false]);
   const [revision,setRevision] = useState<number|null>(null);
+  const [evidenceLoaded,setEvidenceLoaded] = useState(false);
   const [action, setAction] = useState<"APPROVE" | "REJECT" | "REVOKE" | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -120,7 +122,7 @@ function Operator({ user }: { user: User }) {
     finally { setLoading(false); }
   }
   useEffect(() => { if (canAccessOperator(user.role)) void load(); }, [user.id, user.role]);
-  useEffect(() => { setChecked(false); setChecklist([false,false,false,false]); setAction(null); setNotice(""); }, [id]);
+  useEffect(() => { setChecked(false); setChecklist([false,false,false,false]); setEvidenceLoaded(false); setAction(null); setNotice(""); }, [id]);
   useEffect(() => {
     if (!action || busy) return;
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setAction(null); };
@@ -150,9 +152,9 @@ function Operator({ user }: { user: User }) {
         <dl className="meta"><div className="wide"><dt>Mã yêu cầu</dt><dd className="request-id">{request.id}</dd></div><div><dt>Email người gửi</dt><dd>{request.user?.email || "—"}</dd></div><div><dt>Thời gian gửi</dt><dd>{time(request.createdAt)}</dd></div></dl>
         <h2>Lịch sử xử lý</h2><ul className="timeline"><li><span />Đã tiếp nhận <time>{time(request.createdAt)}</time></li>{request.reviewedAt && <li><span />Đã đối chiếu hồ sơ <time>{time(request.reviewedAt)}</time></li>}{request.issuedAt && <li><span />Đã phát hành <time>{time(request.issuedAt)}</time></li>}{request.revokedAt && <li><span />Đã thu hồi <time>{time(request.revokedAt)}</time></li>}</ul>
         {request.revocationReason && <p>Lý do: {request.revocationReason}</p>}
-        <EvidenceReview key={request.id} id={request.id} onRevision={setRevision}/>
-        <div className="detail-actions">{request.status === "PENDING" && <>{["Đã xác nhận đúng người gửi yêu cầu","Đã xem hồ sơ hoặc hoàn thành phương thức đối chiếu","Đã kiểm tra thuộc tính ngày sinh","Hồ sơ đáp ứng điều kiện cấp credential"].map((label,index)=><label className="check-label" key={label}><input type="checkbox" checked={checklist[index]} disabled={busy||revision===null} onChange={event=>setChecklist(previous=>previous.map((value,i)=>i===index?event.target.checked:value))}/>{label}</label>)}<label className="check-label"><input type="checkbox" checked={checked} disabled={busy||revision===null} onChange={event => setChecked(event.target.checked)} /> Tôi xác nhận đã đối chiếu hồ sơ ngoài hệ thống.</label></>}
-          <div className="actions">{request.status === "PENDING" && <button className="primary" disabled={!checked || busy || revision===null || !checklist.every(Boolean)} onClick={() => { setReason(""); setAction("APPROVE"); }}>Phê duyệt</button>}{["PENDING", "APPROVED"].includes(request.status) && <button className="danger-outline" disabled={busy} onClick={() => { setReason(""); setAction("REJECT"); }}>Từ chối</button>}{request.status === "ISSUED" && <button className="danger-outline" disabled={busy} onClick={() => { setReason(""); setAction("REVOKE"); }}>Thu hồi</button>}</div>
+        <EvidenceReview key={request.id} id={request.id} onRevision={setRevision} onLoaded={()=>setEvidenceLoaded(true)}/>
+        <div className="detail-actions">{request.status === "PENDING" && <>{["Đã xác nhận đúng người gửi yêu cầu","Đã xem hồ sơ hoặc hoàn thành phương thức đối chiếu","Đã kiểm tra thuộc tính ngày sinh","Hồ sơ đáp ứng điều kiện cấp credential"].map((label,index)=><label className="check-label" key={label}><input type="checkbox" checked={checklist[index]} disabled={busy||revision===null||!evidenceLoaded} onChange={event=>setChecklist(previous=>previous.map((value,i)=>i===index?event.target.checked:value))}/>{label}</label>)}<label className="check-label"><input type="checkbox" checked={checked} disabled={busy||revision===null||!evidenceLoaded} onChange={event => setChecked(event.target.checked)} /> Tôi xác nhận đã đối chiếu hồ sơ ngoài hệ thống.</label>{!evidenceLoaded&&<p className="list-note">Mở và tải hồ sơ thành công trước khi xác nhận đối chiếu.</p>}</>}
+          <div className="actions">{request.status === "PENDING" && <button className="primary" disabled={!checked || busy || revision===null || !evidenceLoaded || !checklist.every(Boolean)} onClick={() => { setReason(""); setAction("APPROVE"); }}>Phê duyệt</button>}{["PENDING", "APPROVED"].includes(request.status) && <button className="danger-outline" disabled={busy} onClick={() => { setReason(""); setAction("REJECT"); }}>Từ chối</button>}{request.status === "ISSUED" && <button className="danger-outline" disabled={busy} onClick={() => { setReason(""); setAction("REVOKE"); }}>Thu hồi</button>}</div>
         </div>
       </div> : <Empty title="Không tìm thấy yêu cầu" detail="Yêu cầu không tồn tại hoặc chưa có trong danh sách được tải." />}</> : <>
       <div className="stats">{(["PENDING", "APPROVED", "ISSUED", "REJECTED"] as const).map(status => <div className="stat" key={status}><span>{labels[status]}</span><strong>{loading ? "—" : requests.filter(item => item.status === status).length}</strong></div>)}</div>

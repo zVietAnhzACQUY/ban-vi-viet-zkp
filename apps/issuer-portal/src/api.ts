@@ -2,8 +2,14 @@ import type { AgeStatus } from "./flow";
 import { configuredWebsiteOrigin } from "./navigation";
 
 export type User = { id: string; name: string; email: string; role: "CUSTOMER" | "ADMIN" | "ISSUER_OPERATOR" };
-export type AgeRequestStatus = { id: string; status: AgeStatus; createdAt: string };
-export type OperatorAgeRequest = AgeRequestStatus & {
+export type AgeRequestStatus = {
+  id: string;
+  status: AgeStatus;
+  createdAt: string;
+  walletReceived: boolean;
+  walletReceivedAt: string | null;
+};
+export type OperatorAgeRequest = Omit<AgeRequestStatus, "walletReceived" | "walletReceivedAt"> & {
   reviewedAt?: string | null;
   revokedAt?: string | null;
   issuedAt?: string | null; expiresAt?: string | null; revocationReason?: string | null;

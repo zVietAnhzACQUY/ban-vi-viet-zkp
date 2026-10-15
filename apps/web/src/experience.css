@@ -1,0 +1,23 @@
+/* Interaction refinements; business and security states remain unchanged. */
+.password-field-group { display: grid; gap: 8px; }
+.password-field-group label { margin: 0; }
+.caps-lock-hint { display: block; min-height: 1.5em; color: #8a531c; font-size: 12px; line-height: 1.5; }
+:root { --interaction-focus: #3f7358; }
+.password-control { display: flex; align-items: center; position: relative; }
+.password-control input { width: 100%; padding-right: 50px; }
+.password-control .icon { position: absolute; right: 5px; min-width: 40px; min-height: 40px; }
+.empty .button { margin-top: 18px; }
+.product-card button[aria-busy="true"] .spinner { width: 18px; height: 18px; }
+.product-card:focus-within { box-shadow: 0 0 0 2px var(--color-primary-700, #2f5d46); }
+.confirmation-dialog { max-height: calc(100dvh - 40px); overflow-y: auto; }
+.confirmation-dialog textarea { min-height: 100px; resize: vertical; }
+.confirmation-dialog h2 { overflow-wrap: anywhere; }
+.toast { max-width: min(460px, calc(100vw - 32px)); overflow-wrap: anywhere; }
+input, select, textarea { scroll-margin-top: 150px; }
+button:disabled { cursor: not-allowed; }
+@media (max-width: 720px) {
+  input, select, textarea { font-size: 16px; }
+  .product-card .round { min-width: 44px; min-height: 44px; }
+  .toast { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); }
+  .confirmation-dialog { width: 100%; }
+}

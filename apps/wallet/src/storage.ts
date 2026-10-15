@@ -28,7 +28,7 @@ const base64ToBytes = (value: string) => {
 
 async function keyFromPin(pin: string, salt: Uint8Array, iterations: number) {
   if (pin.length < 8 || pin.length > 64)
-    throw new Error("PIN/passphrase Ví phải có 8–64 ký tự.");
+    throw new Error("Mã khóa Ví phải có 8–64 ký tự.");
   const material = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(pin),
@@ -91,7 +91,7 @@ export async function decryptCredential(
     );
     return JSON.parse(new TextDecoder().decode(plaintext));
   } catch {
-    throw new Error("PIN không đúng hoặc dữ liệu Ví đã bị thay đổi.");
+    throw new Error("Mã khóa không đúng hoặc dữ liệu Ví đã bị thay đổi.");
   }
 }
 
@@ -144,5 +144,15 @@ export const ageCredentialStore = {
       await transaction("readonly", (store) => store.get(LEGACY_KEY)),
     ),
 };
+
+export async function encryptAndSaveCredential(
+  credential: AgeCredentialFile,
+  passphrase: string,
+  save: (envelope: EncryptedCredential) => Promise<unknown> = ageCredentialStore.save,
+) {
+  const envelope = await encryptCredential(credential, passphrase);
+  await save(envelope);
+  return envelope;
+}
 
 export type AgeCredentialStore = typeof ageCredentialStore;
