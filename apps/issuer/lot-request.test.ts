@@ -2,13 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, generateKeyPairSync, createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { db } from "../api/src/db.js";
 import { hash } from "../api/src/commerce.js";
 import { createDeliveryApp } from "./delivery-service.js";
 import { claimLotIssuance, finalizeLotIssuance } from "./lot-issuance.js";
-import { openEvidence, MAX_EVIDENCE_BYTES, saveEvidence } from "./evidence-storage.js";
+import { openEvidence, MAX_EVIDENCE_BYTES, saveEvidence, removeEvidence } from "./evidence-storage.js";
 import { createApp } from "../api/src/app.js";
 import { cleanupLotEvidence } from "./cleanup-lot-evidence.js";
 if(process.env.G2_TEST!=="1"||new URL(process.env.DATABASE_URL!).searchParams.get("schema")!=="g2_test_20261007")throw new Error("Isolated current test schema required");
@@ -18,10 +20,10 @@ const fake=Buffer.from("%PDF-1.4\nFICTIONAL LOT CLASSROOM RECORD. NOT REAL EVIDE
 const category=await db.category.create({data:{name:"Fictional LOT",slug:"fictional-"+randomUUID()}});
 const product=await db.product.create({data:{name:"Fictional LOT product",slug:"fictional-"+randomUUID(),subtitle:"Fixture",description:"Entirely fictional",price:1000,stock:10,weight:"1",origin:"Fictional",art:"tea",tone:"#ffffff",categoryId:category.id}});
 async function identity(role:"ADMIN"|"CUSTOMER"|"ISSUER_OPERATOR") {const u=await db.user.create({data:{email:randomUUID()+"@fictional.invalid",name:"Fictional",passwordHash:"unused-test-only",role}}),raw=randomBytes(32).toString("hex");await db.session.create({data:{id:hash((role==="ISSUER_OPERATOR"?"issuer:":"")+raw),userId:u.id,expiresAt:new Date(Date.now()+3600000)}});return {...u,raw};}
-async function send(u:{raw:string},method:"GET"|"POST",url:string,payload?:any,headers:any={}){const operator=url.includes("/operator/"),remoteAddress=`10.${parseInt(u.raw.slice(0,2),16)}.${parseInt(u.raw.slice(2,4),16)}.${Math.floor(Math.random()*250)+1}`,o=headers.origin||origin;const c=await app.inject({url:operator?"/issuer/operator/csrf":"/issuer/csrf",headers:{origin:o},remoteAddress}),token=c.json().token||'0'.repeat(64);return app.inject({url,method,payload,remoteAddress,headers:{origin:o,cookie:`${operator?"issuer_session":"bvv_session"}=${u.raw};${operator?"issuer_csrf":"bvv_csrf"}=${token}`,"x-csrf-token":token,...headers}});}
+async function send(u:{raw:string},method:"GET"|"POST",url:string,payload?:any,headers:any={},targetApp=app){const operator=url.includes("/operator/"),remoteAddress=`10.${parseInt(u.raw.slice(0,2),16)}.${parseInt(u.raw.slice(2,4),16)}.${Math.floor(Math.random()*250)+1}`,o=headers.origin||origin;const c=await targetApp.inject({url:operator?"/issuer/operator/csrf":"/issuer/csrf",headers:{origin:o},remoteAddress}),token=c.json().token||'0'.repeat(64);return targetApp.inject({url,method,payload,remoteAddress,headers:{origin:o,cookie:`${operator?"issuer_session":"bvv_session"}=${u.raw};${operator?"issuer_csrf":"bvv_csrf"}=${token}`,"x-csrf-token":token,...headers}});}
 const owner=await identity("ADMIN"),other=await identity("ADMIN"),customer=await identity("CUSTOMER"),operator=await identity("ISSUER_OPERATOR");
-async function request(){const lot=await db.lot.create({data:{productId:product.id,lotCode:"FICTIONAL-"+randomUUID().slice(0,8).toUpperCase(),status:"ACTIVE",stock:10}});const response=await send(owner,"POST","/issuer/lot/requests",{lotId:lot.id},{origin:web});assert.equal(response.statusCode,200,response.body);return {lot,r:response.json()};}
-const upload=(u:{raw:string},id:string,bytes=fake,extra:any={})=>send(u,"POST",`/issuer/lot/requests/${id}/submission`,bytes,{"content-type":"application/octet-stream","x-evidence-consent":"true","x-evidence-revision":"0","x-evidence-name":"fictional-lot.pdf",...extra});
+async function request(targetApp=app){const lot=await db.lot.create({data:{productId:product.id,lotCode:"FICTIONAL-"+randomUUID().slice(0,8).toUpperCase(),status:"ACTIVE",stock:10}});const response=await send(owner,"POST","/issuer/lot/requests",{lotId:lot.id},{origin:web},targetApp);assert.equal(response.statusCode,200,response.body);return {lot,r:response.json()};}
+const upload=(u:{raw:string},id:string,bytes=fake,extra:any={},targetApp=app)=>send(u,"POST",`/issuer/lot/requests/${id}/submission`,bytes,{"content-type":"application/octet-stream","x-evidence-consent":"true","x-evidence-revision":"0","x-evidence-name":"fictional-lot.pdf",...extra},targetApp);
 const review=(u:{raw:string},id:string,body:any={action:"APPROVE",recordChecked:true,evidenceRevision:1})=>send(u,"POST",`/issuer/lot/operator/requests/${id}/review`,body);
 try{await test("LOT request/evidence security and issuance",async t=>{
  await t.test("test current_schema is isolated",async()=>{assert.equal((await db.$queryRaw<any[]>`SELECT current_schema() AS s`)[0].s,"g2_test_20261007");});
@@ -36,6 +38,63 @@ try{await test("LOT request/evidence security and issuance",async t=>{
  await t.test("CLI denies unapproved; concurrent claims only one winner and finalize recovery idempotent",async()=>{const {r}=await request(),issuedAt=new Date(Math.floor(Date.now()/1000)*1000),input={requestId:r.id,credentialId:randomUUID(),issuedAt,expiresAt:new Date(issuedAt.getTime()+86400000)};await assert.rejects(claimLotIssuance(db,input));await upload(owner,r.id);await review(operator,r.id);const claims=await Promise.allSettled([claimLotIssuance(db,input),claimLotIssuance(db,{...input,credentialId:randomUUID()})]);assert.equal(claims.filter(x=>x.status==="fulfilled").length,1);const locked=await db.lotCredentialRequest.findUniqueOrThrow({where:{id:r.id}});assert.equal(locked.status,"ISSUING");await finalizeLotIssuance(db,r.id,locked.credentialId!);await finalizeLotIssuance(db,r.id,locked.credentialId!);assert.equal(await db.auditLog.count({where:{objectId:r.id,action:"LOT_CREDENTIAL_ISSUED_BY_CLI"}}),1);assert.equal((await review(operator,r.id,{action:"REVOKE",reason:"Fictional test revocation"})).statusCode,200);await assert.rejects(finalizeLotIssuance(db,r.id,locked.credentialId!));});
  await t.test("binding changed rejects submission without affecting inventory",async()=>{const {lot,r}=await request();await db.lot.update({where:{id:lot.id},data:{lotCode:"CHANGED-"+randomUUID().slice(0,8).toUpperCase()}});assert.equal((await upload(owner,r.id)).statusCode,409);assert.equal((await db.lot.findUniqueOrThrow({where:{id:lot.id}})).stock,10);});
  await t.test("customer and issuer operator remain blocked from commerce administration",async()=>{for(const u of [customer,operator]){const res=await commerce.inject({url:"/api/admin/lots",headers:{cookie:`bvv_session=${u.raw}`}});assert([401,403].includes(res.statusCode));}});
- await t.test("LOT cleanup dry-run preserves ciphertext and isolated apply keeps metadata",async()=>{const {r}=await request();assert.equal((await upload(owner,r.id)).statusCode,200);const e=await db.lotVerificationEvidence.findFirstOrThrow({where:{requestId:r.id}});await db.lotCredentialRequest.update({where:{id:r.id},data:{status:"REJECTED",reason:"Fictional retention test",updatedAt:new Date(Date.now()-48*3600000)}});assert((await cleanupLotEvidence(db,storage)).eligible>=1);assert.deepEqual(await openEvidence(storage,e.storageKey,"LOT"),fake);assert.equal((await cleanupLotEvidence(db,storage,{apply:true})).removed,1);assert((await db.lotVerificationEvidence.findUniqueOrThrow({where:{id:e.id}})).deletedAt);assert.equal((await cleanupLotEvidence(db,storage,{apply:true})).removed,0);});
+ await t.test("LOT cleanup dry-run preserves ciphertext and isolated apply keeps metadata",async cleanupTest=>{
+   const cleanupDirectory=await mkdtemp(join(tmpdir(),"bvv-lot-cleanup-fictional-"));
+   const cleanupStorage={directory:cleanupDirectory,key:randomBytes(32)};
+   let cleanupApp:Awaited<ReturnType<typeof createDeliveryApp>>|undefined;
+   try {
+     cleanupApp=await createDeliveryApp(db,{encryptionKey:randomBytes(32),evidenceStorage:cleanupStorage});
+     const {r}=await request(cleanupApp);
+     assert.equal((await upload(owner,r.id,fake,{},cleanupApp)).statusCode,200);
+     const e=await db.lotVerificationEvidence.findFirstOrThrow({where:{requestId:r.id}});
+     // A separate, fresh request owns ciphertext in a different temporary storage.
+     const {r:outside}=await request();
+     assert.equal((await upload(owner,outside.id)).statusCode,200);
+     const foreign=await db.lotVerificationEvidence.findFirstOrThrow({where:{requestId:outside.id}});
+     const now=new Date(),old=new Date(now.getTime()-48*3600000);
+     for(const requestId of [r.id,outside.id]) await db.lotCredentialRequest.update({where:{id:requestId},data:{status:"REJECTED",reason:"Fictional retention test",updatedAt:old}});
+     const outsideFile=join(directory,foreign.storageKey+".lotenc"),outsideBytes=await readFile(outsideFile);
+     const lotFile=join(cleanupDirectory,e.storageKey+".lotenc"),lotBytes=await readFile(lotFile);
+     // Same identifier, different domain: LOT cleanup must not touch AGE ciphertext.
+     await saveEvidence(cleanupStorage,e.storageKey,fake,"AGE");
+     const ageFile=join(cleanupDirectory,e.storageKey+".ageenc"),ageBytes=await readFile(ageFile);
+     const scope={requestId:r.id,now};
+     assert.deepEqual(await cleanupLotEvidence(db,cleanupStorage,scope),{dryRun:true,eligible:1,unavailable:0,removed:0});
+     assert.deepEqual(await readFile(lotFile),lotBytes);
+     assert.equal((await db.lotVerificationEvidence.findUniqueOrThrow({where:{id:e.id}})).deletedAt,null);
+     // Deterministic unlink failure and file-disappearance race, after existence checks.
+     // Restore the built-in immediately; no owner files or permissions are changed.
+     for(const code of ["EACCES","ENOENT"]) {
+       const unlinkMock=cleanupTest.mock.method(fsPromises,"unlink",async()=>{
+         throw Object.assign(new Error("Fictional cleanup failure"),{code});
+       });
+       syncBuiltinESMExports();
+       try { await assert.rejects(cleanupLotEvidence(db,cleanupStorage,{...scope,apply:true}),{code}); }
+       finally { unlinkMock.mock.restore();syncBuiltinESMExports(); }
+       assert.equal((await db.lotVerificationEvidence.findUniqueOrThrow({where:{id:e.id}})).deletedAt,null);
+       assert.deepEqual(await readFile(lotFile),lotBytes);
+       assert.deepEqual(await db.lotVerificationEvidence.findUniqueOrThrow({where:{id:foreign.id}}),foreign);
+     }
+     assert.deepEqual(await cleanupLotEvidence(db,cleanupStorage,{...scope,apply:true}),{dryRun:false,eligible:1,unavailable:0,removed:1});
+     await assert.rejects(readFile(lotFile),{code:"ENOENT"});
+     const deleted=await db.lotVerificationEvidence.findUniqueOrThrow({where:{id:e.id}});
+     assert.equal(deleted.deletedAt?.getTime(),now.getTime());
+     assert.equal(deleted.originalName,"deleted");
+     assert.equal(await db.lotVerificationEvidence.count({where:{requestId:r.id}}),1);
+     assert.equal((await cleanupLotEvidence(db,cleanupStorage,{...scope,apply:true})).removed,0);
+     // Even with the foreign request explicitly selected, missing local ciphertext
+     // must not become a successful deletion or change its retained metadata.
+     for(const apply of [false,true]) assert.deepEqual(
+       await cleanupLotEvidence(db,cleanupStorage,{requestId:outside.id,now,apply}),
+       {dryRun:!apply,eligible:0,unavailable:1,removed:0});
+     assert.deepEqual(await db.lotVerificationEvidence.findUniqueOrThrow({where:{id:foreign.id}}),foreign);
+     assert.deepEqual(await readFile(outsideFile),outsideBytes);
+     assert.deepEqual(await readFile(ageFile),ageBytes);
+     await assert.rejects(removeEvidence(cleanupStorage,foreign.storageKey,"LOT",{requireExisting:true}),{code:"ENOENT"});
+     await assert.rejects(cleanupLotEvidence(db,cleanupStorage,{requestId:"",apply:true}),/scope must be a UUID/);
+   } finally {
+     try { await cleanupApp?.close(); } finally { await rm(cleanupDirectory,{recursive:true,force:true}); }
+   }
+ });
  await t.test("expired issued request is projected EXPIRED without stock/status changes",async()=>{const {lot,r}=await request();await upload(owner,r.id);await review(operator,r.id);const issuedAt=new Date(Date.now()-172800000),expiresAt=new Date(Date.now()-86400000),credentialId=randomUUID();await claimLotIssuance(db,{requestId:r.id,credentialId,issuedAt,expiresAt});await finalizeLotIssuance(db,r.id,credentialId);const result=await send(owner,"GET",`/issuer/lot/requests/${r.id}`);assert.equal(result.json().status,"EXPIRED");const l=await db.lot.findUniqueOrThrow({where:{id:lot.id}});assert.equal(l.status,"ACTIVE");assert.equal(l.stock,10);});
 });}finally{await app.close();await commerce.close();await db.$disconnect();await rm(directory,{recursive:true,force:true});}

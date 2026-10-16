@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { readFile, writeFile, unlink, stat, lstat } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";
 export const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
 export type EvidenceStorage = { directory: string; key: Buffer };
@@ -44,6 +44,13 @@ export async function openEvidence(storage: EvidenceStorage,key:string,domain: E
   cipher.setAAD(Buffer.from(domain === "LOT" ? "LOT:" + key : key)); cipher.setAuthTag(data.subarray(17,33));
   return Buffer.concat([cipher.update(data.subarray(33)),cipher.final()]);
 }
-export async function removeEvidence(storage:EvidenceStorage,key:string,domain: EvidenceDomain = "AGE") {
-  try { await unlink(path(storage,key,domain)); } catch(error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+// Only inspect the configured storage/domain; do not follow a file symlink or decrypt evidence.
+export async function hasEvidenceCiphertext(storage: EvidenceStorage, key: string, domain: EvidenceDomain) {
+  try { return (await lstat(path(storage, key, domain))).isFile(); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+}
+export async function removeEvidence(storage:EvidenceStorage,key:string,domain: EvidenceDomain = "AGE",options:{requireExisting?:boolean}={}) {
+  try { await unlink(path(storage,key,domain)); } catch(error) {
+    if (options.requireExisting || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
